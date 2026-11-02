@@ -55,3 +55,18 @@ test("a forfeit counts as a win for the one who stayed and a loss for the one wh
   const bob = rows.find((r) => r.name === "Bob");
   assert.deepEqual([alice.wins, alice.losses, bob.wins, bob.losses], [0, 1, 1, 0]);
 });
+
+test("results are grouped by player and shown with their current pseudo", () => {
+  const withUids = (r, a, b) => ({ ...r, uids: { a, b } });
+  const rows = buildLeaderboard(
+    [
+      withUids(result("Zizou", 3, "Bob", 0, "a", 1), "u1", "u2"),
+      withUids(result("Zinedine", 3, "Bob", 1, "a", 2), "u1", "u2"),
+      withUids(result("Zizou", 3, "Karim", 0, "a", 3), "u3", "u4"),
+    ],
+    { u1: "Zidane", u2: "Bob" }
+  );
+  const zidane = rows.find((r) => r.name === "Zidane");
+  assert.deepEqual([zidane.played, zidane.wins, zidane.goals], [2, 2, 6]);
+  assert.ok(rows.find((r) => r.name === "Zizou" && r.wins === 1), "u3 keeps its own row");
+});

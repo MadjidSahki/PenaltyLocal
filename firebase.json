@@ -1,7 +1,37 @@
 {
   "hosting": {
     "public": "public",
-    "ignore": ["firebase.json", "**/.*"]
+    "ignore": [
+      "firebase.json",
+      "**/.*"
+    ],
+    "headers": [
+      {
+        "source": "**",
+        "headers": [
+          {
+            "key": "Content-Security-Policy",
+            "value": "default-src 'self'; script-src 'self' https://*.firebasedatabase.app; connect-src 'self' https://*.firebasedatabase.app wss://*.firebasedatabase.app https://identitytoolkit.googleapis.com https://securetoken.googleapis.com http://127.0.0.1:9400 ws://127.0.0.1:9400 http://127.0.0.1:9099; style-src 'self'; img-src 'self' data:; frame-src https://penaltyleague.firebaseapp.com; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+          },
+          {
+            "key": "X-Frame-Options",
+            "value": "DENY"
+          },
+          {
+            "key": "X-Content-Type-Options",
+            "value": "nosniff"
+          },
+          {
+            "key": "Referrer-Policy",
+            "value": "strict-origin-when-cross-origin"
+          },
+          {
+            "key": "Permissions-Policy",
+            "value": "camera=(), microphone=(), geolocation=()"
+          }
+        ]
+      }
+    ]
   },
   "database": {
     "rules": "database.rules.json"
@@ -12,10 +42,21 @@
     }
   },
   "emulators": {
-    "auth": { "host": "127.0.0.1", "port": 9099 },
-    "database": { "host": "127.0.0.1", "port": 9400 },
-    "hosting": { "host": "127.0.0.1", "port": 5002 },
-    "ui": { "enabled": false },
+    "auth": {
+      "host": "127.0.0.1",
+      "port": 9099
+    },
+    "database": {
+      "host": "127.0.0.1",
+      "port": 9400
+    },
+    "hosting": {
+      "host": "127.0.0.1",
+      "port": 5002
+    },
+    "ui": {
+      "enabled": false
+    },
     "singleProjectMode": true
   }
 }

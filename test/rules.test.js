@@ -9,17 +9,21 @@ const {
   assertSucceeds,
   assertFails,
 } = require("@firebase/rules-unit-testing");
-const { ref, set, update, get, remove, serverTimestamp } = require("firebase/database");
+const { ref, set, update, get, remove, serverTimestamp, query, orderByChild, limitToLast } = require("firebase/database");
 
 const CODE = "AB23";
+const PEOPLE = { alice: "Alice", bob: "Bob", carol: "Carol", dave: "Dave" };
 const GRACE_MS = 10500;
 let env;
 
 const db = (uid) => env.authenticatedContext(uid).database();
+// Creates a room together with the creator's rate-limit stamp, as the client does.
+const mkRoom = (uid, room, code = CODE) =>
+  update(ref(db(uid)), { [`rooms/${code}`]: room, [`limits/${uid}/room`]: serverTimestamp() });
 const anon = () => env.unauthenticatedContext().database();
 const seed = (fn) => env.withSecurityRulesDisabled((ctx) => fn(ctx.database()));
 
-const newRoom = (uid, name = "Alice") => ({
+const newRoom = (uid, name = PEOPLE[uid] || "Alice") => ({
   players: { a: uid },
   names: { a: name },
   createdAt: serverTimestamp(),
@@ -27,14 +31,16 @@ const newRoom = (uid, name = "Alice") => ({
 });
 
 // A full room (alice = a, bob = b) with match 1 round 1 started `ago` ms ago.
-async function seedRoom({ ago = 0, extra = {} } = {}) {
+async function seedRoom({ ago = 0, extra = {}, played = false } = {}) {
+  const rounds = { 1: { n: 1, startedAt: Date.now() - ago } };
+  if (played) for (let r = 2; r <= 6; r++) rounds[r] = { n: r, startedAt: Date.now() - ago };
   await seed((d) =>
     set(ref(d, `rooms/${CODE}`), {
       players: { a: "alice", b: "bob" },
       names: { a: "Alice", b: "Bob" },
       createdAt: Date.now() - 60000,
       presence: { a: true, b: true },
-      matches: { 1: { n: 1, rounds: { 1: { n: 1, startedAt: Date.now() - ago } } } },
+      matches: { 1: { n: 1, rounds } },
       ...extra,
     })
   );
@@ -56,13 +62,24 @@ test.before(async () => {
     },
   });
 });
-test.beforeEach(async () => env.clearDatabase());
+test.beforeEach(async () => {
+  await env.clearDatabase();
+  // Every test player already owns their pseudo.
+  await seed((d) => {
+    const data = {};
+    for (const [uid, name] of Object.entries(PEOPLE)) {
+      data[`profiles/${uid}`] = { name, key: name.toLowerCase() };
+      data[`names/${name.toLowerCase()}`] = uid;
+    }
+    return update(ref(d), data);
+  });
+});
 test.after(async () => env.cleanup());
 
 // ---------- rooms ----------
 
 test("a signed-in player can create a room as player a", async () => {
-  await assertSucceeds(set(ref(db("alice"), `rooms/${CODE}`), newRoom("alice")));
+  await assertSucceeds(mkRoom("alice", newRoom("alice")));
 });
 
 test("signed-out visitors cannot create or read rooms", async () => {
@@ -72,16 +89,16 @@ test("signed-out visitors cannot create or read rooms", async () => {
 });
 
 test("cannot create a room in someone else's name", async () => {
-  await assertFails(set(ref(db("alice"), `rooms/${CODE}`), newRoom("bob")));
+  await assertFails(mkRoom("alice", newRoom("bob")));
 });
 
 test("cannot overwrite an existing room", async () => {
-  await assertSucceeds(set(ref(db("alice"), `rooms/${CODE}`), newRoom("alice")));
-  await assertFails(set(ref(db("carol"), `rooms/${CODE}`), newRoom("carol")));
+  await assertSucceeds(mkRoom("alice", newRoom("alice")));
+  await assertFails(mkRoom("carol", newRoom("carol")));
 });
 
 test("room codes must be 4 characters from the safe alphabet", async () => {
-  await assertFails(set(ref(db("alice"), `rooms/AB01`), newRoom("alice")));
+  await assertFails(mkRoom("alice", newRoom("alice"), "AB01"));
 });
 
 test("rooms cannot be listed", async () => {
@@ -90,31 +107,31 @@ test("rooms cannot be listed", async () => {
 });
 
 test("pseudo must be 1 to 16 characters", async () => {
-  await assertFails(set(ref(db("alice"), `rooms/${CODE}`), newRoom("alice", "x".repeat(17))));
-  await assertFails(set(ref(db("alice"), `rooms/${CODE}`), newRoom("alice", "")));
+  await assertFails(mkRoom("alice", newRoom("alice", "x".repeat(17))));
+  await assertFails(mkRoom("alice", newRoom("alice", "")));
 });
 
 const join = (uid, name = "Bob") =>
   update(ref(db(uid), `rooms/${CODE}`), { "players/b": uid, "names/b": name, "presence/b": true });
 
 test("another player can join a waiting room", async () => {
-  await set(ref(db("alice"), `rooms/${CODE}`), newRoom("alice"));
+  await mkRoom("alice", newRoom("alice"));
   await assertSucceeds(join("bob"));
 });
 
 test("the creator cannot join their own room", async () => {
-  await set(ref(db("alice"), `rooms/${CODE}`), newRoom("alice"));
+  await mkRoom("alice", newRoom("alice"));
   await assertFails(join("alice"));
 });
 
 test("a full room cannot be joined", async () => {
-  await set(ref(db("alice"), `rooms/${CODE}`), newRoom("alice"));
+  await mkRoom("alice", newRoom("alice"));
   await join("bob");
   await assertFails(join("carol", "Carol"));
 });
 
 test("a room whose creator left cannot be joined", async () => {
-  await set(ref(db("alice"), `rooms/${CODE}`), newRoom("alice"));
+  await mkRoom("alice", newRoom("alice"));
   await remove(ref(db("alice"), `rooms/${CODE}/presence/a`));
   await assertFails(join("bob"));
 });
@@ -266,13 +283,13 @@ const newMatch = (uid, m) =>
   });
 
 test("the joiner can start match 1 with round 1", async () => {
-  await set(ref(db("alice"), `rooms/${CODE}`), newRoom("alice"));
+  await mkRoom("alice", newRoom("alice"));
   await join("bob");
   await assertSucceeds(newMatch("bob", 1));
 });
 
 test("match 1 cannot start before someone joined", async () => {
-  await set(ref(db("alice"), `rooms/${CODE}`), newRoom("alice"));
+  await mkRoom("alice", newRoom("alice"));
   await assertFails(newMatch("alice", 1));
 });
 
@@ -293,14 +310,14 @@ test("matches cannot be skipped or created twice", async () => {
 });
 
 test("a match cannot start while a player is not present", async () => {
-  await set(ref(db("alice"), `rooms/${CODE}`), newRoom("alice"));
+  await mkRoom("alice", newRoom("alice"));
   await join("bob");
   await remove(ref(db("alice"), `rooms/${CODE}/presence/a`));
   await assertFails(newMatch("bob", 1));
 });
 
 test("a new match cannot come with rematch flags already set", async () => {
-  await set(ref(db("alice"), `rooms/${CODE}`), newRoom("alice"));
+  await mkRoom("alice", newRoom("alice"));
   await join("bob");
   await assertFails(
     set(ref(db("bob"), `rooms/${CODE}/matches/1`), {
@@ -312,8 +329,8 @@ test("a new match cannot come with rematch flags already set", async () => {
 });
 
 test("a new room cannot pre-fill the joiner's name or presence", async () => {
-  await assertFails(set(ref(db("alice"), `rooms/${CODE}`), { ...newRoom("alice"), names: { a: "Alice", b: "Bob" } }));
-  await assertFails(set(ref(db("alice"), `rooms/${CODE}`), { ...newRoom("alice"), presence: { a: true, b: true } }));
+  await assertFails(mkRoom("alice", { ...newRoom("alice"), names: { a: "Alice", b: "Bob" } }));
+  await assertFails(mkRoom("alice", { ...newRoom("alice"), presence: { a: true, b: true } }));
 });
 
 // ---------- results ----------
@@ -329,17 +346,40 @@ const resultFor = (overrides = {}) => ({
   ...overrides,
 });
 
-test("a player of the match can store its result once, and anyone signed in can read results", async () => {
+const latest = (uid, n) => get(query(ref(db(uid), "results"), orderByChild("at"), limitToLast(n)));
+
+test("a player of the match can store its result once, and anyone signed in can read the latest results", async () => {
+  await seedRoom({ played: true });
+  await assertSucceeds(set(ref(db("bob"), `results/${CODE}_1`), resultFor()));
+  await assertFails(set(ref(db("alice"), `results/${CODE}_1`), resultFor()));
+  const recent = await assertSucceeds(latest("carol", 500));
+  assert.equal(recent.child(`${CODE}_1/winner`).val(), "a");
+});
+
+test("results can only be read as the latest 500 at most", async () => {
+  await assertFails(get(ref(db("carol"), "results")));
+  await assertFails(latest("carol", 100000));
+  await assertFails(get(ref(anon(), "results")));
+});
+
+test("a normal result needs a match of at least six shots", async () => {
   await seedRoom();
-  await assertSucceeds(set(ref(db("bob"), `results/${CODE}/1`), resultFor()));
-  await assertFails(set(ref(db("alice"), `results/${CODE}/1`), resultFor()));
-  const all = await assertSucceeds(get(ref(db("carol"), "results")));
-  assert.equal(all.child(`${CODE}/1/winner`).val(), "a");
+  await assertFails(set(ref(db("bob"), `results/${CODE}_1`), resultFor()));
+});
+
+test("goals must be whole numbers", async () => {
+  await seedRoom({ played: true });
+  await assertFails(set(ref(db("bob"), `results/${CODE}_1`), resultFor({ a: { name: "Alice", goals: 1.5 } })));
+});
+
+test("a result's key must match its room and match number", async () => {
+  await seedRoom({ played: true });
+  await assertFails(set(ref(db("bob"), "results/ZZ99_1"), resultFor()));
 });
 
 test("strangers cannot store results", async () => {
-  await seedRoom();
-  await assertFails(set(ref(db("carol"), `results/${CODE}/1`), resultFor()));
+  await seedRoom({ played: true });
+  await assertFails(set(ref(db("carol"), `results/${CODE}_1`), resultFor()));
 });
 
 const forfeitFor = (winner) =>
@@ -348,44 +388,101 @@ const started = { locks: { 1: { 1: { a: Date.now() - 1000 } } } };
 
 test("a forfeit is stored only once the loser has really left", async () => {
   await seedRoom({ extra: started });
-  await assertFails(set(ref(db("bob"), `results/${CODE}/1`), { ...forfeitFor("b"), forfeit: "yes" }));
-  await assertFails(set(ref(db("bob"), `results/${CODE}/1`), forfeitFor("b"))); // alice is still there
+  await assertFails(set(ref(db("bob"), `results/${CODE}_1`), { ...forfeitFor("b"), forfeit: "yes" }));
+  await assertFails(set(ref(db("bob"), `results/${CODE}_1`), forfeitFor("b"))); // alice is still there
   await remove(ref(db("alice"), `rooms/${CODE}/presence/a`));
-  await assertSucceeds(set(ref(db("bob"), `results/${CODE}/1`), forfeitFor("b")));
+  await assertSucceeds(set(ref(db("bob"), `results/${CODE}_1`), forfeitFor("b")));
 });
 
 test("a forfeit for player a needs player b gone", async () => {
   await seedRoom({ extra: started });
-  await assertFails(set(ref(db("alice"), `results/${CODE}/1`), forfeitFor("a")));
+  await assertFails(set(ref(db("alice"), `results/${CODE}_1`), forfeitFor("a")));
   await remove(ref(db("bob"), `rooms/${CODE}/presence/b`));
-  await assertSucceeds(set(ref(db("alice"), `results/${CODE}/1`), forfeitFor("a")));
+  await assertSucceeds(set(ref(db("alice"), `results/${CODE}_1`), forfeitFor("a")));
 });
 
 test("a forfeit needs the winner still present", async () => {
   await seedRoom({ extra: started });
   await remove(ref(db("alice"), `rooms/${CODE}/presence/a`));
   await remove(ref(db("bob"), `rooms/${CODE}/presence/b`));
-  await assertFails(set(ref(db("bob"), `results/${CODE}/1`), forfeitFor("b")));
+  await assertFails(set(ref(db("bob"), `results/${CODE}_1`), forfeitFor("b")));
 });
 
 test("no forfeit before anyone has played a shot of the match", async () => {
   await seedRoom();
   await remove(ref(db("alice"), `rooms/${CODE}/presence/a`));
-  await assertFails(set(ref(db("bob"), `results/${CODE}/1`), forfeitFor("b")));
+  await assertFails(set(ref(db("bob"), `results/${CODE}_1`), forfeitFor("b")));
 });
 
 test("results must match the room and be well-formed", async () => {
-  await seedRoom();
-  await assertFails(set(ref(db("alice"), `results/${CODE}/1`), resultFor({ uids: { a: "alice", b: "carol" } })));
-  await assertFails(set(ref(db("alice"), `results/${CODE}/1`), resultFor({ winner: "c" })));
-  await assertFails(set(ref(db("alice"), `results/${CODE}/1`), resultFor({ at: 123 })));
-  await assertFails(set(ref(db("alice"), `results/${CODE}/2`), resultFor({ m: 2 })));
-  await assertFails(set(ref(db("alice"), `results/${CODE}/1`), resultFor({ a: { name: "Zidane", goals: 3 } })));
+  await seedRoom({ played: true });
+  await assertFails(set(ref(db("alice"), `results/${CODE}_1`), resultFor({ uids: { a: "alice", b: "carol" } })));
+  await assertFails(set(ref(db("alice"), `results/${CODE}_1`), resultFor({ winner: "c" })));
+  await assertFails(set(ref(db("alice"), `results/${CODE}_1`), resultFor({ at: 123 })));
+  await assertFails(set(ref(db("alice"), `results/${CODE}_2`), resultFor({ m: 2 })));
+  await assertFails(set(ref(db("alice"), `results/${CODE}_1`), resultFor({ a: { name: "Zidane", goals: 3 } })));
 });
 
 test("unknown top-level paths are refused", async () => {
   await assertFails(set(ref(db("alice"), "hack"), true));
   await assertFails(get(ref(db("alice"), "/")));
+});
+
+// ---------- pseudos ----------
+
+const claim = (uid, name, old = null) => {
+  const key = name.toLowerCase();
+  const data = { [`profiles/${uid}`]: { name, key }, [`names/${key}`]: uid };
+  if (old) data[`names/${old}`] = null;
+  return update(ref(db(uid)), data);
+};
+
+test("a new player can claim a free pseudo", async () => {
+  await assertSucceeds(claim("erin", "Erin"));
+  const owner = await get(ref(db("dave"), "names/erin"));
+  assert.equal(owner.val(), "erin");
+});
+
+test("a pseudo already taken cannot be claimed, whatever the case", async () => {
+  await assertFails(claim("erin", "ALICE"));
+  await assertFails(claim("erin", "Alice"));
+});
+
+test("a player can rename and the old pseudo is released", async () => {
+  await assertSucceeds(claim("alice", "Alicia", "alice"));
+  await assertSucceeds(claim("erin", "Alice"));
+});
+
+test("a player cannot keep two pseudos or release someone else's", async () => {
+  await assertFails(claim("alice", "Alicia")); // old one not released
+  await assertFails(update(ref(db("erin")), { "names/bob": null }));
+});
+
+test("a profile must point to the reservation of its own pseudo", async () => {
+  await assertFails(set(ref(db("erin"), "profiles/erin"), { name: "Erin", key: "erin" }));
+  await claim("erin", "Erin");
+  await assertFails(set(ref(db("erin"), "profiles/erin"), { name: "Eve", key: "erin" }));
+});
+
+test("pseudos use letters, digits, spaces, dashes and apostrophes only", async () => {
+  await assertFails(claim("erin", "\u202Eniamda"));
+  await assertFails(claim("erin", " Erin"));
+  await assertFails(claim("erin", "Er  in"));
+  await assertFails(claim("erin", "Erin<script>"));
+  await assertSucceeds(claim("erin", "Zoé d'Arc-2"));
+});
+
+test("the name shown in a room must be the player's pseudo", async () => {
+  await assertFails(mkRoom("alice", newRoom("alice", "Zizou")));
+  await mkRoom("alice", newRoom("alice"));
+  await assertFails(update(ref(db("bob"), `rooms/${CODE}`), { "players/b": "bob", "names/b": "Zizou" }));
+});
+
+test("rooms can be created at most once every 3 seconds per player", async () => {
+  await assertSucceeds(mkRoom("alice", newRoom("alice")));
+  await assertFails(mkRoom("alice", newRoom("alice"), "CD45"));
+  await assertFails(set(ref(db("alice"), "rooms/EF67"), newRoom("alice"))); // without the stamp
+  await assertFails(set(ref(db("bob"), "limits/alice/room"), serverTimestamp()));
 });
 
 // ---------- matchmaking queue ----------
@@ -419,33 +516,54 @@ const roomFor = (creator, name, target) => ({ ...newRoom(creator, name), for: ta
 
 test("a waiting player can be matched once, into a room the matcher created for them", async () => {
   await enqueue("alice");
-  await set(ref(db("bob"), `rooms/${CODE}`), roomFor("bob", "Bob", "alice"));
+  await enqueue("bob", "Bob");
+  await mkRoom("bob", roomFor("bob", "Bob", "alice"));
   await assertSucceeds(set(ref(db("bob"), "queue/alice/room"), CODE));
   await assertFails(set(ref(db("carol"), "queue/alice/room"), "ZZ99"));
 });
 
+test("only a queued player who came later can match someone", async () => {
+  await enqueue("alice");
+  await mkRoom("bob", roomFor("bob", "Bob", "alice"));
+  await assertFails(set(ref(db("bob"), "queue/alice/room"), CODE)); // bob is not searching
+  await seed((d) => set(ref(d, "queue/bob"), { name: "Bob", at: Date.now() - 600000 }));
+  await assertFails(set(ref(db("bob"), "queue/alice/room"), CODE)); // bob has waited longer
+});
+
+test("a waiting player can refresh their last-seen time, only to the server time", async () => {
+  await enqueue("alice");
+  await assertSucceeds(update(ref(db("alice"), "queue/alice"), { seen: serverTimestamp() }));
+  await assertFails(update(ref(db("alice"), "queue/alice"), { seen: Date.now() + 600000 }));
+});
+
+test("the matchmaking name must be the player's pseudo", async () => {
+  await assertFails(enqueue("alice", "Bob"));
+});
+
 test("a player cannot be matched into a room that is not the matcher's", async () => {
   await enqueue("alice");
-  await set(ref(db("dave"), `rooms/${CODE}`), roomFor("dave", "Dave", "alice"));
+  await mkRoom("dave", roomFor("dave", "Dave", "alice"));
   await assertFails(set(ref(db("bob"), "queue/alice/room"), CODE));
 });
 
 test("a player cannot be matched into a room made for someone else, or for nobody", async () => {
   await enqueue("alice");
-  await set(ref(db("bob"), `rooms/${CODE}`), roomFor("bob", "Bob", "carol"));
+  await enqueue("bob", "Bob");
+  await mkRoom("bob", roomFor("bob", "Bob", "carol"));
   await assertFails(set(ref(db("bob"), "queue/alice/room"), CODE));
-  await set(ref(db("bob"), "rooms/CD45"), newRoom("bob", "Bob"));
+  await seed((d) => set(ref(d, "rooms/CD45"), { players: { a: "bob" }, names: { a: "Bob" }, createdAt: Date.now(), presence: { a: true } }));
   await assertFails(set(ref(db("bob"), "queue/alice/room"), "CD45"));
 });
 
 test("a player cannot be matched into a room whose creator is not present", async () => {
   await enqueue("alice");
-  await set(ref(db("bob"), `rooms/${CODE}`), { ...roomFor("bob", "Bob", "alice"), presence: null });
+  await enqueue("bob", "Bob");
+  await mkRoom("bob", { ...roomFor("bob", "Bob", "alice"), presence: null });
   await assertFails(set(ref(db("bob"), "queue/alice/room"), CODE));
 });
 
 test("only the matched player can take the second seat of a matchmaking room", async () => {
-  await set(ref(db("bob"), `rooms/${CODE}`), roomFor("bob", "Bob", "alice"));
+  await mkRoom("bob", roomFor("bob", "Bob", "alice"));
   await assertFails(join("carol", "Carol"));
   await assertSucceeds(join("alice", "Alice"));
 });
@@ -466,6 +584,6 @@ test("a player cannot be matched into a room that is already full", async () => 
 });
 
 test("nobody can be matched while not waiting", async () => {
-  await set(ref(db("bob"), `rooms/${CODE}`), roomFor("bob", "Bob", "alice"));
+  await mkRoom("bob", roomFor("bob", "Bob", "alice"));
   await assertFails(set(ref(db("bob"), "queue/alice/room"), CODE));
 });

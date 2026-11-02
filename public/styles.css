@@ -148,6 +148,7 @@ body {
 }
 .scene svg { display: block; width: 100%; height: 100%; }
 .scene .part { transform-box: fill-box; transform-origin: center; }
+.scene #leg-kick { transform-origin: 50% 0%; }
 .scene #ball { transition: transform 0.45s cubic-bezier(0.25, 0.9, 0.4, 1); }
 .scene #keeper { transition: transform 0.38s cubic-bezier(0.25, 0.9, 0.4, 1); }
 .scene #shooter, .scene #leg-kick { transition: transform 0.25s ease-out; }

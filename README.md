@@ -9,7 +9,9 @@ Ouvre le lien, entre un pseudo, puis :
 - **« Chercher un adversaire »** : tu affrontes automatiquement le premier joueur qui cherche aussi.
 - **« Créer un salon »** pour jouer avec un ami : donne-lui le code à 4 caractères, il le saisit et clique sur « Rejoindre ».
 
-Le classement de l'accueil compte les matchs terminés, par pseudo. Quitter un
+Ton pseudo t'est réservé, et ton navigateur s'en souvient. Tu peux le changer
+quand tu veux : tes victoires te suivent. Le classement de l'accueil compte les
+matchs terminés. Quitter un
 match en cours (bouton « Abandonner », onglet fermé, connexion perdue) compte
 comme une défaite, et comme une victoire pour l'adversaire.
 

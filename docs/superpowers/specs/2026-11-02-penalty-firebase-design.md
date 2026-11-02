@@ -36,8 +36,11 @@ from GitHub Actions.
 
 - Static client on Firebase Hosting; Firebase JS SDK 13.2.0 loaded as ES modules
   from gstatic; no build step.
-- Firebase Anonymous Auth with **per-tab session persistence**, so two tabs of the
-  same browser are two players.
+- Firebase Anonymous Auth with **local persistence**: the browser keeps the same
+  player between visits (two tabs of one browser are the same player).
+- Pseudos are reserved: `names/{lowercase}` maps a pseudo to one player and
+  `profiles/{uid}` holds the player's pseudo. Renaming releases the old one.
+  The scoreboard groups results by player id and shows the current pseudo.
 - Realtime Database; security rules are the referee:
   - a choice is write-once, only by its player, only while
     `now <= round.startedAt + 10500` (10 s + 0.5 s network grace);
@@ -57,8 +60,11 @@ from GitHub Actions.
   rule-checked choices with the pure `match.js` and get the same result.
 - Accepted trade-off (agreed): a player who edits the page can still write a fake
   result record or set rematch flags early; this only affects the scoreboard.
-- Scoreboard groups results by pseudo (case-insensitive), since anonymous
-  identities are per tab. Anyone can type any pseudo (accepted, colleagues).
+- The scoreboard reads only the latest 500 results (rules: ordered by `at`,
+  limited), and a normal result needs a match of at least 6 shots.
+- A player can create at most one room every 3 s (`limits/{uid}/room`).
+- Security headers (CSP, frame-ancestors, nosniff, referrer policy) are set in
+  `firebase.json`; the Firebase SDK is served from `public/vendor/firebase`.
 - First shooter alternates between matches in the same room (odd match: creator,
   even match: joiner).
 - Deploy uses a Google service-account key stored as the GitHub secret
@@ -80,7 +86,10 @@ rooms/{code}
   locks/{m}/{r}/{a|b}: server time   public "I have chosen" flag
 choices/{code}/{m}/{r}/{a|b}: "left" | "center" | "right"
 queue/{uid}: { name, at, room? }   matchmaking: room is set by the matcher
-results/{code}/{m}: { code, m, uids:{a,b}, a:{name,goals}, b:{name,goals}, winner, at, forfeit? }
+results/{code}_{m}: { code, m, uids:{a,b}, a:{name,goals}, b:{name,goals}, winner, at, forfeit? }
+profiles/{uid}: { name, key }          names/{key}: uid
+limits/{uid}/room: server time of the player's last new room
+rooms/{code}/for: uid                  matchmaking: seat b reserved for that player
 ```
 
 ## Flow

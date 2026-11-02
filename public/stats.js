@@ -14,15 +14,20 @@ function isValid(r) {
   );
 }
 
-// Aggregates stored match results into scoreboard rows, one per pseudo
-// (grouped case-insensitively, shown with the most recent spelling).
-function buildLeaderboard(results) {
+// Aggregates stored match results into scoreboard rows, one per player.
+// Players are identified by their account id when the result has one, and
+// shown with their current pseudo (`currentNames`: uid -> pseudo), so a
+// rename carries the player's record. Older results without ids are
+// grouped by pseudo, case-insensitively, with the most recent spelling.
+function buildLeaderboard(results, currentNames = {}) {
   const rows = new Map();
   const sorted = results.filter(isValid).sort((x, y) => (x.at || 0) - (y.at || 0));
   for (const r of sorted) {
     for (const slot of ["a", "b"]) {
-      const name = cleanName(r[slot].name);
-      const key = name.toLowerCase();
+      const uid = r.uids && typeof r.uids[slot] === "string" ? r.uids[slot] : null;
+      const storedName = cleanName(r[slot].name);
+      const name = (uid && cleanName(currentNames[uid])) || storedName;
+      const key = uid ? "id:" + uid : "name:" + storedName.toLowerCase();
       const row = rows.get(key) || { name, played: 0, wins: 0, losses: 0, goals: 0 };
       row.name = name;
       row.played += 1;

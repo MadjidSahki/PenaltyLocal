@@ -105,8 +105,8 @@ export function resetScene() {
   scene.classList.add("no-anim");
   for (const node of [ball, keeper, shooter, legKick]) node.style.transform = "";
   ball.style.transition = "";
-  armsDown.style.display = "";
-  armsUp.style.display = "none";
+  armsDown.removeAttribute("hidden");
+  armsUp.setAttribute("hidden", "");
   banner.hidden = true;
   banner.textContent = "";
   banner.className = "result-banner";
@@ -135,8 +135,8 @@ export function playShot(result) {
     later(150, () => {
       if (shooterZone !== null) ball.style.transform = goal ? BALL_GOAL[shooterZone] : BALL_SAVED[shooterZone];
       if (keeperZone !== null) {
-        armsDown.style.display = "none";
-        armsUp.style.display = "";
+        armsDown.setAttribute("hidden", "");
+        armsUp.removeAttribute("hidden");
         keeper.style.transform = KEEPER_DIVE[keeperZone];
       }
       if (!goal && shooterZone !== null) {

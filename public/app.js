@@ -1,11 +1,11 @@
-import { initializeApp } from "https://www.gstatic.com/firebasejs/13.2.0/firebase-app.js";
+import { initializeApp } from "./vendor/firebase/firebase-app.js";
 import {
   getAuth,
   connectAuthEmulator,
   setPersistence,
-  browserSessionPersistence,
+  browserLocalPersistence,
   signInAnonymously,
-} from "https://www.gstatic.com/firebasejs/13.2.0/firebase-auth.js";
+} from "./vendor/firebase/firebase-auth.js";
 import {
   getDatabase,
   connectDatabaseEmulator,
@@ -17,7 +17,10 @@ import {
   onValue,
   onDisconnect,
   serverTimestamp,
-} from "https://www.gstatic.com/firebasejs/13.2.0/firebase-database.js";
+  query,
+  orderByChild,
+  limitToLast,
+} from "./vendor/firebase/firebase-database.js";
 import { firebaseConfig, emulators } from "./firebase-config.js";
 import { playShot, resetScene } from "./scene.js";
 
@@ -32,6 +35,12 @@ const START_MARGIN_MS = 250; // covers the error of the server time estimate
 const NETWORK_TIMEOUT_MS = 8000;
 const CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const LEADERBOARD_SIZE = 10;
+const RESULTS_READ = 500; // must match database.rules.json
+const ROOM_INTERVAL_MS = 3000; // must match database.rules.json
+const QUEUE_BEAT_MS = 20000;
+const QUEUE_STALE_MS = 60000;
+// Same pattern as database.rules.json: letters, digits, single spaces, - and '.
+const PSEUDO_RE = /^[A-Za-z0-9À-ÖØ-öø-ÿ]+([ '-][A-Za-z0-9À-ÖØ-öø-ÿ]+)*$/;
 const TITLE = "Penalty League";
 
 const app = initializeApp(firebaseConfig);
@@ -146,12 +155,21 @@ function renderScores(scores) {
 
 // ---------- scoreboard ----------
 
+// The scoreboard covers the latest results (the rules cap the read), with
+// each player's current pseudo so that a rename carries their record.
 async function loadLeaderboard() {
   try {
-    const snap = await get(ref(db, "results"));
+    const snap = await get(query(ref(db, "results"), orderByChild("at"), limitToLast(RESULTS_READ)));
     const results = [];
-    snap.forEach((room) => { room.forEach((match) => { results.push(match.val()); }); });
-    renderLeaderboard(buildLeaderboard(results).slice(0, LEADERBOARD_SIZE));
+    snap.forEach((match) => { results.push(match.val()); });
+    const uids = new Set();
+    for (const r of results) if (r && r.uids) for (const uid of [r.uids.a, r.uids.b]) if (typeof uid === "string") uids.add(uid);
+    const currentNames = {};
+    await Promise.all([...uids].slice(0, 200).map(async (uid) => {
+      const name = (await get(ref(db, `profiles/${uid}/name`))).val();
+      if (name) currentNames[uid] = name;
+    }));
+    renderLeaderboard(buildLeaderboard(results, currentNames).slice(0, LEADERBOARD_SIZE));
   } catch {
     renderLeaderboard([]);
   }
@@ -184,6 +202,36 @@ function randomCode() {
 
 function pseudo() {
   return el.nickname.value.trim().replace(/\s+/g, " ").slice(0, 16);
+}
+
+// This browser's player profile: { name, key } once a pseudo is reserved.
+let profile = null;
+
+// Makes sure the pseudo typed on the home screen is reserved for this player,
+// renaming them if they changed it. Returns the pseudo, or null after showing
+// why it cannot be used.
+async function ensurePseudo() {
+  const name = pseudo();
+  if (!name) { showHomeError("Choisis un pseudo."); return null; }
+  if (!PSEUDO_RE.test(name)) {
+    showHomeError("Ton pseudo : lettres, chiffres, espaces, - ou ' (16 caractères max).");
+    return null;
+  }
+  if (profile && profile.name === name) return name;
+  const uid = auth.currentUser.uid;
+  const key = name.toLowerCase();
+  const data = { [`profiles/${uid}`]: { name, key } };
+  if (!profile || profile.key !== key) data[`names/${key}`] = uid;
+  if (profile && profile.key !== key) data[`names/${profile.key}`] = null;
+  try {
+    await withTimeout(update(ref(db), data));
+  } catch (err) {
+    showHomeError(err.message === "timeout" ? OFFLINE_MESSAGE : "Ce pseudo est déjà pris, choisis-en un autre.");
+    return null;
+  }
+  profile = { name, key };
+  localStorage.setItem("pseudo", name);
+  return name;
 }
 
 const roomPath = (s, rest = "") => `rooms/${s.code}${rest}`;
@@ -246,35 +294,40 @@ function goHome(notice) {
 const OFFLINE_MESSAGE = "Pas de connexion au serveur. Vérifie ta connexion et réessaie.";
 
 // Writes a new room with this player as its creator; returns its code.
-// `forUid` reserves the second seat for a matched player.
+// `forUid` reserves the second seat for a matched player. The rules allow
+// one new room every 3 s per player, stamped in limits/{uid}/room.
+let lastRoomAt = 0;
 async function newRoomCode(name, forUid = null) {
-  for (let attempt = 0; attempt < 6; attempt++) {
+  const uid = auth.currentUser.uid;
+  for (let attempt = 0; attempt < 10; attempt++) {
+    const wait = lastRoomAt + ROOM_INTERVAL_MS + 300 - serverNow();
+    if (wait > 0) await sleep(wait);
     const code = randomCode();
     const room = {
-      players: { a: auth.currentUser.uid },
+      players: { a: uid },
       names: { a: name },
       createdAt: serverTimestamp(),
     };
     if (forUid) room.for = forUid;
     try {
-      await withTimeout(set(ref(db, `rooms/${code}`), room));
+      await withTimeout(update(ref(db), { [`rooms/${code}`]: room, [`limits/${uid}/room`]: serverTimestamp() }));
+      lastRoomAt = serverNow();
       return code;
     } catch (err) {
       if (err.message === "timeout") throw err;
-      // code already taken: try another one
+      await sleep(400); // code already taken, or another tab just made a room
     }
   }
   throw new Error("no free code");
 }
 
 async function createRoom() {
-  const name = pseudo();
-  if (!name) { showHomeError("Choisis un pseudo."); return; }
-  localStorage.setItem("pseudo", name);
   el.homeError.hidden = true;
   setHomeEnabled(false);
   const t = nav;
   try {
+    const name = await ensurePseudo();
+    if (!name || nav !== t) return;
     const code = await newRoomCode(name);
     if (nav !== t) return;
     await startSession(code, "a");
@@ -290,17 +343,16 @@ async function createRoom() {
 }
 
 async function joinRoom() {
-  const name = pseudo();
   const code = el.joinCode.value.trim().toUpperCase();
-  if (!name) { showHomeError("Choisis un pseudo."); return; }
   if (!/^[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{4}$/.test(code)) {
     showHomeError("Entre un code à 4 caractères.");
     return;
   }
-  localStorage.setItem("pseudo", name);
   el.homeError.hidden = true;
   setHomeEnabled(false);
   try {
+    const name = await ensurePseudo();
+    if (!name) return;
     const problem = await joinRoomCode(code, name);
     if (problem) goHome(problem);
   } finally {
@@ -359,12 +411,15 @@ const MATCH_START_TIMEOUT_MS = 10000;
 let search = null;
 
 async function startSearch(notice) {
-  const name = pseudo();
-  if (!name) { goHome("Choisis un pseudo."); return; }
-  localStorage.setItem("pseudo", name);
   el.homeError.hidden = true;
   setHomeEnabled(false);
   const t = nav;
+  const name = await ensurePseudo();
+  if (!name) {
+    setHomeEnabled(true);
+    if (nav === t) showView("home"); // the reason is already shown there
+    return;
+  }
   const uid = auth.currentUser.uid;
   const entry = ref(db, `queue/${uid}`);
   try {
@@ -379,6 +434,8 @@ async function startSearch(notice) {
   if (nav !== t) { remove(entry).catch(() => {}); return; }
   const s = { name, uid, entry, busy: false, tried: new Set(), last: {} };
   search = s;
+  // Show we are still here, so others can skip entries left by closed tabs.
+  s.beat = setInterval(() => update(entry, { seen: serverTimestamp() }).catch(() => {}), QUEUE_BEAT_MS);
   el.searchStatus.textContent = notice || "En attente d'un autre joueur…";
   showView("search");
   s.unsubscribe = onValue(ref(db, "queue"), (snap) => {
@@ -392,6 +449,7 @@ function stopSearch() {
   const s = search;
   if (!s) return;
   search = null;
+  clearInterval(s.beat);
   if (s.unsubscribe) s.unsubscribe();
   onDisconnect(s.entry).cancel().catch(() => {});
   remove(s.entry).catch(() => {});
@@ -423,6 +481,7 @@ async function onQueue(s) {
   const key = (uid, e) => `${uid}:${e.at}`;
   const candidates = Object.entries(queue)
     .filter(([uid, e]) => uid !== s.uid && e && !e.room && typeof e.at === "number" && !s.tried.has(key(uid, e)))
+    .filter(([, e]) => (typeof e.seen === "number" ? e.seen : e.at) >= serverNow() - QUEUE_STALE_MS)
     .filter(([uid, e]) => e.at < mine.at || (e.at === mine.at && uid < s.uid))
     .sort((x, y) => x[1].at - y[1].at || (x[0] < y[0] ? -1 : 1));
   if (!candidates.length) return;
@@ -666,7 +725,7 @@ function saveResult(s, { winner = s.match.winner, forfeit = false } = {}) {
     at: serverTimestamp(),
   };
   if (forfeit) record.forfeit = true;
-  return set(ref(db, `results/${s.code}/${s.m}`), record).then(() => true, () => false);
+  return set(ref(db, `results/${s.code}_${s.m}`), record).then(() => true, () => false);
 }
 
 function forfeit() {
@@ -751,9 +810,15 @@ onValue(ref(db, ".info/connected"), (snap) => {
   }
 });
 
-setPersistence(auth, browserSessionPersistence)
+setPersistence(auth, browserLocalPersistence)
   .then(() => signInAnonymously(auth))
-  .then(() => {
+  .then(async () => {
+    try {
+      profile = (await get(ref(db, `profiles/${auth.currentUser.uid}`))).val();
+    } catch {
+      profile = null;
+    }
+    if (profile) el.nickname.value = profile.name;
     setHomeEnabled(true);
     loadLeaderboard();
   })
