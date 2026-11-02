@@ -31,6 +31,9 @@ Il n'y a pas de serveur : les règles de `database.rules.json` jouent l'arbitre
 (choix secrets jusqu'à ce que les deux joueurs aient choisi, chrono de 10 s,
 tirs dans l'ordre, revanche seulement si les deux la demandent).
 
+La base n'accepte que les pages du site qui passent la vérification
+reCAPTCHA (Firebase App Check) : un script qui l'appelle directement est refusé.
+
 Chaque push sur `main` lance les tests puis déploie le site
 (`.github/workflows/deploy.yml`).
 

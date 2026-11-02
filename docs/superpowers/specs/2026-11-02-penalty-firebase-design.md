@@ -63,6 +63,12 @@ from GitHub Actions.
 - The scoreboard reads only the latest 500 results (rules: ordered by `at`,
   limited), and a normal result needs a match of at least 6 shots.
 - A player can create at most one room every 3 s (`limits/{uid}/room`).
+- App Check (reCAPTCHA Enterprise, score key restricted to the two site
+  domains, min score 0.5) is enforced on the Realtime Database: requests
+  without a valid App Check token are refused. The client skips it on the
+  local emulators. The reCAPTCHA badge is hidden and replaced by the required
+  notice under the scoreboard. The browser API key allows Identity Toolkit,
+  Secure Token and App Check only, from the site's referrers.
 - Security headers (CSP, frame-ancestors, nosniff, referrer policy) are set in
   `firebase.json`; the Firebase SDK is served from `public/vendor/firebase`.
 - First shooter alternates between matches in the same room (odd match: creator,
