@@ -229,3 +229,28 @@ body {
 .grecaptcha-badge { visibility: hidden !important; }
 .recaptcha-note { margin: 14px 0 0; font-size: 0.75rem; color: rgba(255, 255, 255, 0.7); text-align: center; }
 .recaptcha-note a { color: inherit; }
+
+/* ---------- Kits: you are always blue, the opponent red ---------- */
+:root { --me: #1565c0; --me-dark: #0d47a1; --them: #d32f2f; --them-dark: #9a1b1b; }
+.scene.me-shoots #shooter .kit, .scene.me-keeps #keeper .kit { fill: var(--me); }
+.scene.me-shoots #shooter .kit-dark, .scene.me-keeps #keeper .kit-dark { fill: var(--me-dark); }
+.scene.me-shoots #keeper .kit, .scene.me-keeps #shooter .kit { fill: var(--them); }
+.scene.me-shoots #keeper .kit-dark, .scene.me-keeps #shooter .kit-dark { fill: var(--them-dark); }
+.scene.me-shoots #keeper .kit-num, .scene.me-keeps #keeper .kit-num { fill: #fff; }
+
+.side .pname { display: inline-flex; align-items: center; gap: 6px; }
+.side .pname::before { content: ""; width: 10px; height: 10px; border-radius: 50%; background: var(--them); box-shadow: 0 0 0 2px rgba(255,255,255,0.8); }
+.side.is-me .pname::before { background: var(--me); }
+
+.role-banner {
+  display: flex; flex-direction: column; align-items: center;
+  margin: 4px 0 8px; min-height: 0;
+}
+.role-title {
+  font-size: 1.9rem; font-weight: 900; letter-spacing: 1px; text-transform: uppercase;
+  color: #fff; padding: 6px 22px; border-radius: 999px;
+  background: var(--me); box-shadow: 0 4px 14px rgba(0,0,0,0.3);
+}
+.role-title.flash { animation: role-pop 0.5s cubic-bezier(0.3, 1.6, 0.5, 1); }
+@keyframes role-pop { from { transform: scale(0.6); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+.role-hint { margin-top: 6px; font-size: 1rem; font-weight: 600; color: rgba(255,255,255,0.92); }

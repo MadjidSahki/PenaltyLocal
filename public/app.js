@@ -92,7 +92,9 @@ const el = {
   nameB: document.getElementById("name-b"),
   scoreA: document.getElementById("score-a"),
   scoreB: document.getElementById("score-b"),
-  roleBanner: document.getElementById("role-banner"),
+  roleTitle: document.getElementById("role-title"),
+  roleHint: document.getElementById("role-hint"),
+  scene: document.getElementById("scene"),
   clock: document.getElementById("clock"),
   controls: document.getElementById("controls"),
   matchStatus: document.getElementById("match-status"),
@@ -600,6 +602,9 @@ function beginMatch(s, m) {
   });
   el.nameA.textContent = s.room.names.a;
   el.nameB.textContent = s.room.names.b;
+  // You are always blue, the opponent red (dot next to each name, kits).
+  el.nameA.parentElement.classList.toggle("is-me", s.slot === "a");
+  el.nameB.parentElement.classList.toggle("is-me", s.slot === "b");
   renderScores({ a: 0, b: 0 });
   resetScene();
   el.matchStatus.textContent = "";
@@ -644,9 +649,13 @@ function step(s) {
 function showTurn(s, r, round, locks) {
   s.shownTurn = r;
   const iShoot = s.match.shooter === s.slot;
-  el.roleBanner.textContent = iShoot
-    ? "À toi de tirer — choisis une zone"
-    : "Tu es gardien — choisis où plonger";
+  el.roleTitle.textContent = iShoot ? "Tu tires" : "Tu es gardien";
+  el.roleHint.textContent = iShoot ? "Choisis où frapper" : "Choisis où plonger";
+  el.scene.classList.toggle("me-shoots", iShoot);
+  el.scene.classList.toggle("me-keeps", !iShoot);
+  el.roleTitle.classList.remove("flash");
+  void el.roleTitle.offsetWidth; // restart the animation on every turn
+  el.roleTitle.classList.add("flash");
   resetScene();
   el.matchStatus.textContent = `Tir n°${r}`;
   const open = !locks[s.slot] && serverNow() < round.startedAt + SHOT_CLOCK_MS;

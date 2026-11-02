@@ -79,7 +79,10 @@
         </div>
       </div>
 
-      <div id="role-banner" class="role-banner">À toi de jouer</div>
+      <div id="role-banner" class="role-banner">
+        <div class="role-title" id="role-title">À toi de jouer</div>
+        <div class="role-hint" id="role-hint"></div>
+      </div>
 
       <div class="clock-wrap">
         <div id="clock" class="clock">10</div>
@@ -164,19 +167,19 @@
                 <path d="M-14 0 H14 L15 13 H2 L0 9 L-2 13 H-15 Z" fill="#1b1b1b"/>
                 <!-- arms: down when waiting, up when diving -->
                 <g id="arms-down">
-                  <rect x="-21" y="-25" width="8" height="22" rx="4" fill="#c6e000" transform="rotate(28 -17 -25)"/>
-                  <rect x="13" y="-25" width="8" height="22" rx="4" fill="#c6e000" transform="rotate(-28 17 -25)"/>
+                  <rect class="kit" x="-21" y="-25" width="8" height="22" rx="4" fill="#c6e000" transform="rotate(28 -17 -25)"/>
+                  <rect class="kit" x="13" y="-25" width="8" height="22" rx="4" fill="#c6e000" transform="rotate(-28 17 -25)"/>
                   <circle cx="-26" cy="-6" r="5" fill="#ff7043"/><circle cx="26" cy="-6" r="5" fill="#ff7043"/>
                 </g>
                 <g id="arms-up" hidden>
-                  <rect x="-19" y="-52" width="8" height="28" rx="4" fill="#c6e000" transform="rotate(-14 -15 -24)"/>
-                  <rect x="11" y="-52" width="8" height="28" rx="4" fill="#c6e000" transform="rotate(14 15 -24)"/>
+                  <rect class="kit" x="-19" y="-52" width="8" height="28" rx="4" fill="#c6e000" transform="rotate(-14 -15 -24)"/>
+                  <rect class="kit" x="11" y="-52" width="8" height="28" rx="4" fill="#c6e000" transform="rotate(14 15 -24)"/>
                   <circle cx="-21" cy="-55" r="5.5" fill="#ff7043"/><circle cx="21" cy="-55" r="5.5" fill="#ff7043"/>
                 </g>
                 <!-- torso -->
-                <path d="M-14 -26 Q0 -31 14 -26 L15 1 H-15 Z" fill="#c6e000"/>
-                <path d="M-14 -26 Q0 -31 14 -26 L14 -20 Q0 -24 -14 -20 Z" fill="#9fb600"/>
-                <text x="0" y="-8" text-anchor="middle" font-size="11" font-weight="800" fill="#1b1b1b" font-family="system-ui">1</text>
+                <path class="kit" d="M-14 -26 Q0 -31 14 -26 L15 1 H-15 Z" fill="#c6e000"/>
+                <path class="kit-dark" d="M-14 -26 Q0 -31 14 -26 L14 -20 Q0 -24 -14 -20 Z" fill="#9fb600"/>
+                <text class="kit-num" x="0" y="-8" text-anchor="middle" font-size="11" font-weight="800" fill="#1b1b1b" font-family="system-ui">1</text>
                 <!-- head -->
                 <rect x="-3" y="-33" width="6" height="6" fill="#c98b5f"/>
                 <circle cx="0" cy="-41" r="9" fill="#d89a6c"/>
@@ -217,14 +220,14 @@
                 <rect x="26" y="-34" width="11" height="40" rx="5.5" fill="#e7b48a" transform="rotate(-18 31 -34)"/>
                 <!-- shirt with vertical stripes -->
                 <g clip-path="url(#shirtClip)">
-                  <rect x="-30" y="-46" width="60" height="70" fill="#1565c0"/>
+                  <rect class="kit" x="-30" y="-46" width="60" height="70" fill="#1565c0"/>
                   <rect x="-21" y="-46" width="8" height="70" fill="#fff"/>
                   <rect x="-4" y="-46" width="8" height="70" fill="#fff"/>
                   <rect x="13" y="-46" width="8" height="70" fill="#fff"/>
                 </g>
-                <path d="M-30 -36 Q-34 -24 -32 -14 L-25 -16 L-24 -38Z" fill="#1565c0"/>
-                <path d="M30 -36 Q34 -24 32 -14 L25 -16 L24 -38Z" fill="#1565c0"/>
-                <rect x="-12" y="-28" width="24" height="18" rx="3" fill="#0d47a1"/>
+                <path class="kit" d="M-30 -36 Q-34 -24 -32 -14 L-25 -16 L-24 -38Z" fill="#1565c0"/>
+                <path class="kit" d="M30 -36 Q34 -24 32 -14 L25 -16 L24 -38Z" fill="#1565c0"/>
+                <rect class="kit-dark" x="-12" y="-28" width="24" height="18" rx="3" fill="#0d47a1"/>
                 <text x="0" y="-14" text-anchor="middle" font-size="15" font-weight="800" fill="#fff" font-family="system-ui">10</text>
                 <!-- neck and head from behind -->
                 <rect x="-6" y="-52" width="12" height="9" fill="#d7a173"/>
