@@ -84,6 +84,16 @@ from GitHub Actions.
   `FIREBASE_SERVICE_ACCOUNT` (deploys hosting, database rules and the Anonymous
   Auth setting).
 
+## Cameras and kits
+
+- You are always blue, the opponent red. The role ("TU TIRES" / "TU ES
+  GARDIEN") is shown big and pops on every turn.
+- When you shoot, the camera is behind the shooter; when you keep, it is
+  behind the keeper, facing the shooter. Buttons follow each player's own
+  screen: zones are stored as the shooter sees them, so the keeper's choice
+  is mirrored (`mirrorZone` in match.js) and the keeper's animation mirrors
+  the result back to screen sides.
+
 ## Data model
 
 ```

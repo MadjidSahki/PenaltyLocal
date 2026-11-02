@@ -5,24 +5,36 @@ const NS = "http://www.w3.org/2000/svg";
 const $ = (id) => document.getElementById(id);
 
 const scene = $("scene");
-const ball = $("ball");
-const keeper = $("keeper");
-const shooter = $("shooter");
-const legKick = $("leg-kick");
-const armsDown = $("arms-down");
-const armsUp = $("arms-up");
 const banner = $("result-banner");
 
-// Final positions, in the local units of each group (see index.html).
-const BALL_GOAL = { left: "translate(-72px,-150px) scale(.62)", center: "translate(0px,-160px) scale(.6)", right: "translate(72px,-150px) scale(.62)" };
-const BALL_SAVED = { left: "translate(-95px,-115px) scale(.62)", center: "translate(0px,-166px) scale(.6)", right: "translate(95px,-115px) scale(.62)" };
-const BALL_REBOUND = { left: "translate(-128px,-54px) scale(.7)", center: "translate(0px,-69px) scale(.72)", right: "translate(128px,-54px) scale(.7)" };
-const KEEPER_DIVE = { left: "translate(-46px,4px) rotate(-80deg)", center: "translate(0px,-10px)", right: "translate(46px,4px) rotate(80deg)" };
+// The two cameras drawn in index.html. Positions are keyed by screen side,
+// in the local units of each group.
+const SHOOTER_VIEW = {
+  ball: $("ball"), keeper: $("keeper"), shooter: $("shooter"), legKick: $("leg-kick"),
+  armsDown: $("arms-down"), armsUp: $("arms-up"),
+  kick: { shooter: "translate(-22px,-26px)", leg: "rotate(-28deg)" },
+  ballGoal: { left: "translate(-72px,-150px) scale(.62)", center: "translate(0px,-160px) scale(.6)", right: "translate(72px,-150px) scale(.62)" },
+  ballSaved: { left: "translate(-95px,-115px) scale(.62)", center: "translate(0px,-166px) scale(.6)", right: "translate(95px,-115px) scale(.62)" },
+  ballRebound: { left: "translate(-128px,-54px) scale(.7)", center: "translate(0px,-69px) scale(.72)", right: "translate(128px,-54px) scale(.7)" },
+  dive: { left: "translate(-46px,4px) rotate(-80deg)", center: "translate(0px,-10px)", right: "translate(46px,4px) rotate(80deg)" },
+};
+const KEEPER_VIEW = {
+  ball: $("k-ball"), keeper: $("k-keeper"), shooter: $("k-shooter"), legKick: $("k-leg-kick"),
+  armsDown: $("k-arms-down"), armsUp: $("k-arms-up"),
+  kick: { shooter: "translateY(6px)", leg: "rotate(-24deg)" },
+  ballGoal: { left: "translate(-112px,104px) scale(1.25)", center: "translate(0px,96px) scale(1.25)", right: "translate(112px,104px) scale(1.25)" },
+  ballSaved: { left: "translate(-126px,82px) scale(1.15)", center: "translate(0px,51px) scale(1.1)", right: "translate(126px,82px) scale(1.15)" },
+  ballRebound: { left: "translate(-150px,30px) scale(1.2)", center: "translate(30px,-40px) scale(.8)", right: "translate(150px,30px) scale(1.2)" },
+  dive: { left: "translate(-62px,2px) rotate(-78deg)", center: "translate(0px,-8px)", right: "translate(62px,2px) rotate(78deg)" },
+};
+
+// Zones are named as the shooter sees the goal; the keeper's camera looks
+// the other way, so left and right swap on screen.
+const MIRROR = { left: "right", center: "center", right: "left" };
 
 // ---------- crowd ----------
 
-function buildCrowd() {
-  const crowd = $("crowd");
+function buildCrowd(crowd) {
   let seed = 7;
   const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
   const pick = (list) => list[Math.floor(rnd() * list.length)];
@@ -103,10 +115,12 @@ export function resetScene() {
   timers.forEach(clearTimeout);
   timers = [];
   scene.classList.add("no-anim");
-  for (const node of [ball, keeper, shooter, legKick]) node.style.transform = "";
-  ball.style.transition = "";
-  armsDown.removeAttribute("hidden");
-  armsUp.setAttribute("hidden", "");
+  for (const v of [SHOOTER_VIEW, KEEPER_VIEW]) {
+    for (const node of [v.ball, v.keeper, v.shooter, v.legKick]) node.style.transform = "";
+    v.ball.style.transition = "";
+    v.armsDown.removeAttribute("hidden");
+    v.armsUp.setAttribute("hidden", "");
+  }
   banner.hidden = true;
   banner.textContent = "";
   banner.className = "result-banner";
@@ -123,27 +137,32 @@ export function playShot(result) {
   resetScene();
   const current = token;
   const later = (ms, fn) => timers.push(setTimeout(() => { if (current === token) fn(); }, ms));
-  const { shooterZone, keeperZone, goal } = result;
+  const { goal } = result;
+  const keeperCam = scene.classList.contains("me-keeps");
+  const v = keeperCam ? KEEPER_VIEW : SHOOTER_VIEW;
+  const onScreen = (zone) => (zone === null ? null : keeperCam ? MIRROR[zone] : zone);
+  const shooterZone = onScreen(result.shooterZone);
+  const keeperZone = onScreen(result.keeperZone);
 
   return new Promise((resolve) => {
     later(30, () => {
       if (shooterZone !== null) {
-        shooter.style.transform = "translate(-22px,-26px)";
-        legKick.style.transform = "rotate(-28deg)";
+        v.shooter.style.transform = v.kick.shooter;
+        v.legKick.style.transform = v.kick.leg;
       }
     });
     later(150, () => {
-      if (shooterZone !== null) ball.style.transform = goal ? BALL_GOAL[shooterZone] : BALL_SAVED[shooterZone];
+      if (shooterZone !== null) v.ball.style.transform = goal ? v.ballGoal[shooterZone] : v.ballSaved[shooterZone];
       if (keeperZone !== null) {
-        armsDown.setAttribute("hidden", "");
-        armsUp.removeAttribute("hidden");
-        keeper.style.transform = KEEPER_DIVE[keeperZone];
+        v.armsDown.setAttribute("hidden", "");
+        v.armsUp.removeAttribute("hidden");
+        v.keeper.style.transform = v.dive[keeperZone];
       }
       if (!goal && shooterZone !== null) {
         // the keeper pushes the ball away once it reaches the gloves
         later(470, () => {
-          ball.style.transition = "transform 0.5s cubic-bezier(0.2, 0.7, 0.3, 1)";
-          ball.style.transform = BALL_REBOUND[shooterZone];
+          v.ball.style.transition = "transform 0.5s cubic-bezier(0.2, 0.7, 0.3, 1)";
+          v.ball.style.transform = v.ballRebound[shooterZone];
         });
       }
     });
@@ -169,4 +188,5 @@ export function playShot(result) {
   });
 }
 
-buildCrowd();
+buildCrowd($("crowd"));
+buildCrowd($("k-crowd"));

@@ -25,7 +25,7 @@ import { initializeAppCheck, ReCaptchaEnterpriseProvider } from "./vendor/fireba
 import { firebaseConfig, emulators, recaptchaSiteKey } from "./firebase-config.js";
 import { playShot, resetScene } from "./scene.js";
 
-const { createMatch, applyRound } = window.PenaltyMatch;
+const { createMatch, applyRound, mirrorZone } = window.PenaltyMatch;
 const { buildLeaderboard } = window.PenaltyStats;
 
 const SHOT_CLOCK_MS = 10000;
@@ -663,9 +663,12 @@ function showTurn(s, r, round, locks) {
   startClock(round.startedAt + SHOT_CLOCK_MS);
 }
 
-async function choose(zone) {
+// `screenZone` is the button the player pressed, as seen on their screen.
+async function choose(screenZone) {
   const s = session;
   if (!s || !s.m || el.controls.classList.contains("disabled")) return;
+  // The keeper's camera faces the shooter: their left is the shooter's right.
+  const zone = s.match.shooter === s.slot ? screenZone : mirrorZone(screenZone);
   setControlsEnabled(false);
   const r = s.shownTurn;
   try {

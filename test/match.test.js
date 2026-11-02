@@ -147,3 +147,17 @@ test("applyRound replays a whole match identically to choice-by-choice play", ()
   assert.equal(m.round, 7);
   assert.equal(m.shooter, "b");
 });
+
+test("mirrorZone: the keeper's screen is the shooter's screen seen from the other side", () => {
+  const { mirrorZone } = require("../public/match");
+  assert.equal(mirrorZone("left"), "right");
+  assert.equal(mirrorZone("right"), "left");
+  assert.equal(mirrorZone("center"), "center");
+  assert.equal(mirrorZone(null), null);
+});
+
+test("a keeper diving to their screen-left saves a shot to the shooter's screen-right", () => {
+  const { mirrorZone, applyRound } = require("../public/match");
+  const r = applyRound(createMatch(), { a: "right", b: mirrorZone("left") });
+  assert.equal(r.state.lastResult.goal, false);
+});

@@ -254,3 +254,13 @@ body {
 .role-title.flash { animation: role-pop 0.5s cubic-bezier(0.3, 1.6, 0.5, 1); }
 @keyframes role-pop { from { transform: scale(0.6); opacity: 0; } to { transform: scale(1); opacity: 1; } }
 .role-hint { margin-top: 6px; font-size: 1rem; font-weight: 600; color: rgba(255,255,255,0.92); }
+
+/* Two cameras: behind the shooter when you shoot, behind the keeper when you keep */
+.scene .view-keeper { display: none; }
+.scene.me-keeps .view-shooter { display: none; }
+.scene.me-keeps .view-keeper { display: block; }
+.scene #k-leg-kick { transform-origin: 50% 0%; }
+.scene #k-ball { transform: scale(0.45); transition: transform 0.5s cubic-bezier(0.3, 0.6, 0.4, 1); }
+.scene #k-keeper { transition: transform 0.38s cubic-bezier(0.25, 0.9, 0.4, 1); }
+.scene #k-shooter, .scene #k-leg-kick { transition: transform 0.25s ease-out; }
+.scene.no-anim #k-ball, .scene.no-anim #k-keeper, .scene.no-anim #k-shooter, .scene.no-anim #k-leg-kick { transition: none; }

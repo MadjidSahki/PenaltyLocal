@@ -183,8 +183,17 @@ function applyRound(state, choices) {
   return submitChoice(r.state, keeper, keeperZone);
 }
 
+// Zones are named as the shooter sees the goal. The keeper looks the other
+// way, so their screen-left is the shooter's right.
+function mirrorZone(zone) {
+  if (zone === "left") return "right";
+  if (zone === "right") return "left";
+  return zone;
+}
+
 const api = {
   ZONES,
+  mirrorZone,
   createMatch,
   submitChoice,
   submitTimeout,
