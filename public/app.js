@@ -21,7 +21,8 @@ import {
   orderByChild,
   limitToLast,
 } from "./vendor/firebase/firebase-database.js";
-import { firebaseConfig, emulators } from "./firebase-config.js";
+import { initializeAppCheck, ReCaptchaEnterpriseProvider } from "./vendor/firebase/firebase-app-check.js";
+import { firebaseConfig, emulators, recaptchaSiteKey } from "./firebase-config.js";
 import { playShot, resetScene } from "./scene.js";
 
 const { createMatch, applyRound } = window.PenaltyMatch;
@@ -44,6 +45,14 @@ const PSEUDO_RE = /^[A-Za-z0-9À-ÖØ-öø-ÿ]+([ '-][A-Za-z0-9À-ÖØ-öø-ÿ]+
 const TITLE = "Penalty League";
 
 const app = initializeApp(firebaseConfig);
+// App Check: the database only answers pages that pass reCAPTCHA on the real
+// site. The local emulators do not check it.
+if (!emulators) {
+  initializeAppCheck(app, {
+    provider: new ReCaptchaEnterpriseProvider(recaptchaSiteKey),
+    isTokenAutoRefreshEnabled: true,
+  });
+}
 const auth = getAuth(app);
 const db = getDatabase(app);
 if (emulators) {

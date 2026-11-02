@@ -6,6 +6,9 @@ export const emulators = LOCAL_HOSTS.includes(location.hostname)
   ? { host: "127.0.0.1", authPort: 9099, databasePort: 9400 }
   : null;
 
+// reCAPTCHA Enterprise site key used by App Check (public, domain-restricted).
+export const recaptchaSiteKey = "6LdAVQ0uAAAAAHbhc5a2hid_tk44G465gqK4jk9c";
+
 export const firebaseConfig = emulators
   ? {
       apiKey: "demo-key",

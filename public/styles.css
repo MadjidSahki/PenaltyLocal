@@ -224,3 +224,8 @@ body {
 .leaderboard tbody tr:first-child td { font-weight: 800; }
 .leaderboard td:nth-child(3) { font-weight: 700; color: #1b5e20; }
 .lb-empty { color: #9aa0a6; margin: 8px 0 0; text-align: center; }
+
+/* reCAPTCHA's required notice replaces its floating badge */
+.grecaptcha-badge { visibility: hidden !important; }
+.recaptcha-note { margin: 14px 0 0; font-size: 0.75rem; color: rgba(255, 255, 255, 0.7); text-align: center; }
+.recaptcha-note a { color: inherit; }
