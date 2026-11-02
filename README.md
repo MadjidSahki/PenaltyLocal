@@ -5,12 +5,16 @@ Le serveur tourne sur ton PC ; l'adversaire ouvre simplement une adresse.
 
 ## Lancer
 
-Prérequis : Node.js 18 ou plus récent.
+Prérequis : [Node.js](https://nodejs.org) 18 ou plus récent.
 
 ```bash
+git clone https://github.com/MadjidSahki/PenaltyLocal.git
+cd PenaltyLocal
 npm install
 npm start
 ```
+
+`npm install` n'est nécessaire qu'une fois. Les fois suivantes, `npm start` suffit.
 
 Le serveur affiche les adresses à utiliser, par exemple :
 
