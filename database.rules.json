@@ -83,7 +83,10 @@
         "for": {
           ".validate": "newData.isString() && newData.val().length <= 128"
         }
-      }
+      },
+      ".indexOn": [
+        "createdAt"
+      ]
     },
     "choices": {
       "$code": {
@@ -119,7 +122,10 @@
         "seen": {
           ".validate": "newData.val() === now"
         }
-      }
+      },
+      ".indexOn": [
+        "at"
+      ]
     },
     "results": {
       ".read": "auth != null && query.orderByChild === 'at' && query.limitToLast <= 500",
@@ -128,7 +134,7 @@
       ],
       "$id": {
         ".write": "auth != null && !data.exists()",
-        ".validate": "newData.hasChildren(['code', 'm', 'uids', 'a', 'b', 'winner', 'at']) && $id === newData.child('code').val() + '_' + newData.child('m').val() && (root.child('rooms/' + newData.child('code').val() + '/players/a').val() === auth.uid || root.child('rooms/' + newData.child('code').val() + '/players/b').val() === auth.uid) && root.child('rooms/' + newData.child('code').val() + '/matches/' + newData.child('m').val()).exists() && newData.child('uids/a').val() === root.child('rooms/' + newData.child('code').val() + '/players/a').val() && newData.child('uids/b').val() === root.child('rooms/' + newData.child('code').val() + '/players/b').val() && newData.child('a/name').val() === root.child('rooms/' + newData.child('code').val() + '/names/a').val() && newData.child('b/name').val() === root.child('rooms/' + newData.child('code').val() + '/names/b').val() && newData.child('winner').val().matches(/^[ab]$/) && newData.child('at').val() === now && (newData.child('forfeit').exists() || root.child('rooms/' + newData.child('code').val() + '/matches/' + newData.child('m').val() + '/rounds/6').exists())",
+        ".validate": "newData.hasChildren(['code', 'm', 'uids', 'a', 'b', 'winner', 'at']) && $id === newData.child('code').val() + '_' + root.child('rooms/' + newData.child('code').val() + '/createdAt').val() + '_' + newData.child('m').val() && (root.child('rooms/' + newData.child('code').val() + '/players/a').val() === auth.uid || root.child('rooms/' + newData.child('code').val() + '/players/b').val() === auth.uid) && root.child('rooms/' + newData.child('code').val() + '/matches/' + newData.child('m').val()).exists() && newData.child('uids/a').val() === root.child('rooms/' + newData.child('code').val() + '/players/a').val() && newData.child('uids/b').val() === root.child('rooms/' + newData.child('code').val() + '/players/b').val() && newData.child('a/name').val() === root.child('rooms/' + newData.child('code').val() + '/names/a').val() && newData.child('b/name').val() === root.child('rooms/' + newData.child('code').val() + '/names/b').val() && newData.child('winner').val().matches(/^[ab]$/) && newData.child('at').val() === now && (newData.child('forfeit').exists() || root.child('rooms/' + newData.child('code').val() + '/matches/' + newData.child('m').val() + '/rounds/6').exists())",
         "code": {
           ".validate": "newData.isString() && newData.val().matches(/^[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{4}$/)"
         },

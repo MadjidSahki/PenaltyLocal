@@ -63,6 +63,13 @@ from GitHub Actions.
 - The scoreboard reads only the latest 500 results (rules: ordered by `at`,
   limited), and a normal result needs a match of at least 6 shots.
 - A player can create at most one room every 3 s (`limits/{uid}/room`).
+- Nightly cleanup (`.github/workflows/cleanup.yml`, `scripts/cleanup.js`, run
+  with the deploy service account): removes rooms created more than 24 h ago
+  (unless used in the last hour) with their choices, queue entries idle for
+  10 min and room stamps older than 24 h. Profiles, pseudos and results are
+  kept. Result keys include the room's creation time so that a reused code
+  never collides with an old result. A player still in a removed room goes
+  home with "Ce salon a expiré."
 - App Check (reCAPTCHA Enterprise, score key restricted to the two site
   domains, min score 0.5) is enforced on the Realtime Database: requests
   without a valid App Check token are refused. The client skips it on the
@@ -92,7 +99,7 @@ rooms/{code}
   locks/{m}/{r}/{a|b}: server time   public "I have chosen" flag
 choices/{code}/{m}/{r}/{a|b}: "left" | "center" | "right"
 queue/{uid}: { name, at, room? }   matchmaking: room is set by the matcher
-results/{code}_{m}: { code, m, uids:{a,b}, a:{name,goals}, b:{name,goals}, winner, at, forfeit? }
+results/{code}_{room createdAt}_{m}: { code, m, uids:{a,b}, a:{name,goals}, b:{name,goals}, winner, at, forfeit? }
 profiles/{uid}: { name, key }          names/{key}: uid
 limits/{uid}/room: server time of the player's last new room
 rooms/{code}/for: uid                  matchmaking: seat b reserved for that player

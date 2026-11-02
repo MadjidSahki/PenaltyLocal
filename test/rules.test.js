@@ -13,6 +13,10 @@ const { ref, set, update, get, remove, serverTimestamp, query, orderByChild, lim
 
 const CODE = "AB23";
 const PEOPLE = { alice: "Alice", bob: "Bob", carol: "Carol", dave: "Dave" };
+const CREATED = Date.now() - 60000; // creation time of the seeded room
+// Result keys carry the room's creation time, so a code reused after the
+// nightly cleanup never collides with an old result.
+const RES1 = `${CODE}_${CREATED}_1`;
 const GRACE_MS = 10500;
 let env;
 
@@ -38,7 +42,7 @@ async function seedRoom({ ago = 0, extra = {}, played = false } = {}) {
     set(ref(d, `rooms/${CODE}`), {
       players: { a: "alice", b: "bob" },
       names: { a: "Alice", b: "Bob" },
-      createdAt: Date.now() - 60000,
+      createdAt: CREATED,
       presence: { a: true, b: true },
       matches: { 1: { n: 1, rounds } },
       ...extra,
@@ -350,10 +354,10 @@ const latest = (uid, n) => get(query(ref(db(uid), "results"), orderByChild("at")
 
 test("a player of the match can store its result once, and anyone signed in can read the latest results", async () => {
   await seedRoom({ played: true });
-  await assertSucceeds(set(ref(db("bob"), `results/${CODE}_1`), resultFor()));
-  await assertFails(set(ref(db("alice"), `results/${CODE}_1`), resultFor()));
+  await assertSucceeds(set(ref(db("bob"), `results/${RES1}`), resultFor()));
+  await assertFails(set(ref(db("alice"), `results/${RES1}`), resultFor()));
   const recent = await assertSucceeds(latest("carol", 500));
-  assert.equal(recent.child(`${CODE}_1/winner`).val(), "a");
+  assert.equal(recent.child(`${RES1}/winner`).val(), "a");
 });
 
 test("results can only be read as the latest 500 at most", async () => {
@@ -364,22 +368,31 @@ test("results can only be read as the latest 500 at most", async () => {
 
 test("a normal result needs a match of at least six shots", async () => {
   await seedRoom();
-  await assertFails(set(ref(db("bob"), `results/${CODE}_1`), resultFor()));
+  await assertFails(set(ref(db("bob"), `results/${RES1}`), resultFor()));
 });
 
 test("goals must be whole numbers", async () => {
   await seedRoom({ played: true });
-  await assertFails(set(ref(db("bob"), `results/${CODE}_1`), resultFor({ a: { name: "Alice", goals: 1.5 } })));
+  await assertFails(set(ref(db("bob"), `results/${RES1}`), resultFor({ a: { name: "Alice", goals: 1.5 } })));
 });
 
-test("a result's key must match its room and match number", async () => {
+test("a result's key must match its room, its creation time and match number", async () => {
   await seedRoom({ played: true });
-  await assertFails(set(ref(db("bob"), "results/ZZ99_1"), resultFor()));
+  await assertFails(set(ref(db("bob"), `results/ZZ99_${CREATED}_1`), resultFor()));
+  await assertFails(set(ref(db("bob"), `results/${CODE}_1`), resultFor())); // old key format
+  await assertFails(set(ref(db("bob"), `results/${CODE}_${CREATED + 1}_1`), resultFor()));
+});
+
+test("a room code reused after cleanup can store its own result", async () => {
+  await seed((d) => set(ref(d, `results/${RES1}`), { winner: "a", at: CREATED }));
+  const reborn = CREATED + 86400000;
+  await seedRoom({ played: true, extra: { createdAt: reborn } });
+  await assertSucceeds(set(ref(db("bob"), `results/${CODE}_${reborn}_1`), resultFor()));
 });
 
 test("strangers cannot store results", async () => {
   await seedRoom({ played: true });
-  await assertFails(set(ref(db("carol"), `results/${CODE}_1`), resultFor()));
+  await assertFails(set(ref(db("carol"), `results/${RES1}`), resultFor()));
 });
 
 const forfeitFor = (winner) =>
@@ -388,39 +401,39 @@ const started = { locks: { 1: { 1: { a: Date.now() - 1000 } } } };
 
 test("a forfeit is stored only once the loser has really left", async () => {
   await seedRoom({ extra: started });
-  await assertFails(set(ref(db("bob"), `results/${CODE}_1`), { ...forfeitFor("b"), forfeit: "yes" }));
-  await assertFails(set(ref(db("bob"), `results/${CODE}_1`), forfeitFor("b"))); // alice is still there
+  await assertFails(set(ref(db("bob"), `results/${RES1}`), { ...forfeitFor("b"), forfeit: "yes" }));
+  await assertFails(set(ref(db("bob"), `results/${RES1}`), forfeitFor("b"))); // alice is still there
   await remove(ref(db("alice"), `rooms/${CODE}/presence/a`));
-  await assertSucceeds(set(ref(db("bob"), `results/${CODE}_1`), forfeitFor("b")));
+  await assertSucceeds(set(ref(db("bob"), `results/${RES1}`), forfeitFor("b")));
 });
 
 test("a forfeit for player a needs player b gone", async () => {
   await seedRoom({ extra: started });
-  await assertFails(set(ref(db("alice"), `results/${CODE}_1`), forfeitFor("a")));
+  await assertFails(set(ref(db("alice"), `results/${RES1}`), forfeitFor("a")));
   await remove(ref(db("bob"), `rooms/${CODE}/presence/b`));
-  await assertSucceeds(set(ref(db("alice"), `results/${CODE}_1`), forfeitFor("a")));
+  await assertSucceeds(set(ref(db("alice"), `results/${RES1}`), forfeitFor("a")));
 });
 
 test("a forfeit needs the winner still present", async () => {
   await seedRoom({ extra: started });
   await remove(ref(db("alice"), `rooms/${CODE}/presence/a`));
   await remove(ref(db("bob"), `rooms/${CODE}/presence/b`));
-  await assertFails(set(ref(db("bob"), `results/${CODE}_1`), forfeitFor("b")));
+  await assertFails(set(ref(db("bob"), `results/${RES1}`), forfeitFor("b")));
 });
 
 test("no forfeit before anyone has played a shot of the match", async () => {
   await seedRoom();
   await remove(ref(db("alice"), `rooms/${CODE}/presence/a`));
-  await assertFails(set(ref(db("bob"), `results/${CODE}_1`), forfeitFor("b")));
+  await assertFails(set(ref(db("bob"), `results/${RES1}`), forfeitFor("b")));
 });
 
 test("results must match the room and be well-formed", async () => {
   await seedRoom({ played: true });
-  await assertFails(set(ref(db("alice"), `results/${CODE}_1`), resultFor({ uids: { a: "alice", b: "carol" } })));
-  await assertFails(set(ref(db("alice"), `results/${CODE}_1`), resultFor({ winner: "c" })));
-  await assertFails(set(ref(db("alice"), `results/${CODE}_1`), resultFor({ at: 123 })));
-  await assertFails(set(ref(db("alice"), `results/${CODE}_2`), resultFor({ m: 2 })));
-  await assertFails(set(ref(db("alice"), `results/${CODE}_1`), resultFor({ a: { name: "Zidane", goals: 3 } })));
+  await assertFails(set(ref(db("alice"), `results/${RES1}`), resultFor({ uids: { a: "alice", b: "carol" } })));
+  await assertFails(set(ref(db("alice"), `results/${RES1}`), resultFor({ winner: "c" })));
+  await assertFails(set(ref(db("alice"), `results/${RES1}`), resultFor({ at: 123 })));
+  await assertFails(set(ref(db("alice"), `results/${CODE}_${CREATED}_2`), resultFor({ m: 2 })));
+  await assertFails(set(ref(db("alice"), `results/${RES1}`), resultFor({ a: { name: "Zidane", goals: 3 } })));
 });
 
 test("unknown top-level paths are refused", async () => {

@@ -550,7 +550,11 @@ function watchMatchedRoom(s) {
 // there first; the database rules make every write happen at most once.
 
 function onRoom(s, room) {
-  if (!room) return;
+  if (!room) {
+    // The room was removed by the nightly cleanup.
+    if (s.room) goHome("Ce salon a expiré.");
+    return;
+  }
   s.room = room;
   const opp = otherSlot(s.slot);
   const oppPresent = !!(room.presence && room.presence[opp]);
@@ -734,7 +738,8 @@ function saveResult(s, { winner = s.match.winner, forfeit = false } = {}) {
     at: serverTimestamp(),
   };
   if (forfeit) record.forfeit = true;
-  return set(ref(db, `results/${s.code}_${s.m}`), record).then(() => true, () => false);
+  // The key carries the room's creation time: codes are reused after cleanup.
+  return set(ref(db, `results/${s.code}_${s.room.createdAt}_${s.m}`), record).then(() => true, () => false);
 }
 
 function forfeit() {

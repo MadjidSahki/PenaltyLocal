@@ -5,14 +5,16 @@
   "type": "commonjs",
   "scripts": {
     "start": "firebase emulators:start --only auth,database,hosting --project demo-penalty",
-    "test": "node --test test/match.test.js test/stats.test.js",
-    "test:rules": "firebase emulators:exec --only database --project demo-penalty \"node --test test/rules.test.js\"",
+    "test": "node --test test/match.test.js test/stats.test.js test/cleanup.test.js",
+    "test:rules": "firebase emulators:exec --only database --project demo-penalty \"node --test --test-concurrency=1 test/rules.test.js test/cleanup-run.test.js\"",
     "test:all": "npm test && npm run test:rules",
-    "deploy": "firebase deploy --only hosting,database,auth --project penaltyleague"
+    "deploy": "firebase deploy --only hosting,database,auth --project penaltyleague",
+    "cleanup": "node scripts/cleanup.js"
   },
   "devDependencies": {
     "@firebase/rules-unit-testing": "6.0.0",
     "firebase": "13.2.0",
-    "firebase-tools": "15.34.2"
+    "firebase-tools": "15.34.2",
+    "google-auth-library": "9.15.1"
   }
 }
