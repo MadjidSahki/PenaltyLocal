@@ -23,7 +23,7 @@ let env;
 const db = (uid) => env.authenticatedContext(uid).database();
 // Creates a room together with the creator's rate-limit stamp, as the client does.
 const mkRoom = (uid, room, code = CODE) =>
-  update(ref(db(uid)), { [`rooms/${code}`]: room, [`limits/${uid}/room`]: serverTimestamp() });
+  update(ref(db(uid)), { [`rooms/${code}`]: room, [`limits/${uid}/room`]: serverTimestamp(), [`limits/${uid}/code`]: code });
 const anon = () => env.unauthenticatedContext().database();
 const seed = (fn) => env.withSecurityRulesDisabled((ctx) => fn(ctx.database()));
 
@@ -360,6 +360,12 @@ test("a player of the match can store its result once, and anyone signed in can 
   assert.equal(recent.child(`${RES1}/winner`).val(), "a");
 });
 
+test("results cannot be paged through with start or end bounds", async () => {
+  const { endAt, startAt } = require("firebase/database");
+  await assertFails(get(query(ref(db("carol"), "results"), orderByChild("at"), endAt(Date.now()), limitToLast(500))));
+  await assertFails(get(query(ref(db("carol"), "results"), orderByChild("at"), startAt(0), limitToLast(500))));
+});
+
 test("results can only be read as the latest 500 at most", async () => {
   await assertFails(get(ref(db("carol"), "results")));
   await assertFails(latest("carol", 100000));
@@ -466,6 +472,10 @@ test("a player can rename and the old pseudo is released", async () => {
   await assertSucceeds(claim("erin", "Alice"));
 });
 
+test("a profile cannot be deleted, so an old pseudo cannot be kept while taking a new one", async () => {
+  await assertFails(remove(ref(db("alice"), "profiles/alice")));
+});
+
 test("a player cannot keep two pseudos or release someone else's", async () => {
   await assertFails(claim("alice", "Alicia")); // old one not released
   await assertFails(update(ref(db("erin")), { "names/bob": null }));
@@ -489,6 +499,16 @@ test("the name shown in a room must be the player's pseudo", async () => {
   await assertFails(mkRoom("alice", newRoom("alice", "Zizou")));
   await mkRoom("alice", newRoom("alice"));
   await assertFails(update(ref(db("bob"), `rooms/${CODE}`), { "players/b": "bob", "names/b": "Zizou" }));
+});
+
+test("one stamp creates exactly one room, even in a single multi-path update", async () => {
+  await assertFails(update(ref(db("alice")), {
+    "limits/alice/room": serverTimestamp(), "limits/alice/code": CODE,
+    [`rooms/${CODE}`]: newRoom("alice"), "rooms/CD45": newRoom("alice"),
+  }));
+  await assertFails(update(ref(db("alice")), {
+    "limits/alice/room": serverTimestamp(), [`rooms/${CODE}`]: newRoom("alice"),
+  })); // stamp without the room code
 });
 
 test("rooms can be created at most once every 3 seconds per player", async () => {

@@ -41,23 +41,28 @@ async function request(token, method, path, { params, body } = {}) {
   const now = Date.now();
   const totals = { rooms: 0, queue: 0, limits: 0 };
 
-  // Old rooms, oldest first, a batch at a time (rooms are indexed on createdAt).
-  // Rooms we keep (still in use, or everything in a dry run) are skipped on
-  // the next page.
-  const skipped = new Set();
+  // Old rooms, oldest first, a page at a time (rooms are indexed on
+  // createdAt). The cursor moves past each page, so rooms that are kept
+  // (still in use, or everything in a dry run) are read only once.
+  let cursor = null;
+  let seenAtCursor = new Set();
   for (;;) {
-    const limit = BATCH + skipped.size;
-    const rooms = await request(token, "GET", "rooms", {
-      params: { orderBy: '"createdAt"', endAt: String(now - ROOM_MAX_AGE_MS), limitToFirst: String(limit) },
-    }) || {};
+    const params = { orderBy: '"createdAt"', endAt: String(now - ROOM_MAX_AGE_MS), limitToFirst: String(BATCH) };
+    if (cursor !== null) params.startAt = String(cursor);
+    const rooms = await request(token, "GET", "rooms", { params }) || {};
     const returned = Object.keys(rooms).length;
-    for (const code of skipped) delete rooms[code];
+    for (const code of seenAtCursor) delete rooms[code];
     const plan = planCleanup({ rooms }, now);
     const removed = Object.keys(plan).filter((p) => p.startsWith("rooms/")).length;
-    for (const code of Object.keys(rooms)) if (dryRun || !(`rooms/${code}` in plan)) skipped.add(code);
     if (removed && !dryRun) await request(token, "PATCH", "", { body: plan });
     totals.rooms += removed;
-    if (returned < limit) break;
+    if (returned < BATCH) break;
+    const times = Object.values(rooms).map((r) => r && r.createdAt).filter((t) => typeof t === "number");
+    if (!times.length) break;
+    const last = Math.max(...times);
+    const atLast = Object.entries(rooms).filter(([, r]) => r && r.createdAt === last).map(([code]) => code);
+    seenAtCursor = new Set(last === cursor ? [...seenAtCursor, ...atLast] : atLast);
+    cursor = last;
   }
 
   const queue = await request(token, "GET", "queue") || {};

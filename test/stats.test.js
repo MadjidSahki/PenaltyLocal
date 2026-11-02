@@ -70,3 +70,9 @@ test("results are grouped by player and shown with their current pseudo", () => 
   assert.deepEqual([zidane.played, zidane.wins, zidane.goals], [2, 2, 6]);
   assert.ok(rows.find((r) => r.name === "Zizou" && r.wins === 1), "u3 keeps its own row");
 });
+
+test("each row carries the player's id when results have one", () => {
+  const rows = buildLeaderboard([{ ...result("Zizou", 3, "Bob", 0, "a"), uids: { a: "u1", b: "u2" } }, result("Old", 1, "Timer", 3, "b")]);
+  assert.equal(rows.find((r) => r.name === "Zizou").uid, "u1");
+  assert.equal(rows.find((r) => r.name === "Old").uid, null);
+});

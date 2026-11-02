@@ -21,7 +21,7 @@ import {
   orderByChild,
   limitToLast,
 } from "./vendor/firebase/firebase-database.js";
-import { initializeAppCheck, ReCaptchaEnterpriseProvider } from "./vendor/firebase/firebase-app-check.js";
+import { initializeAppCheck, ReCaptchaEnterpriseProvider, onTokenChanged } from "./vendor/firebase/firebase-app-check.js";
 import { firebaseConfig, emulators, recaptchaSiteKey } from "./firebase-config.js";
 import { playShot, resetScene } from "./scene.js";
 
@@ -36,6 +36,7 @@ const START_MARGIN_MS = 250; // covers the error of the server time estimate
 const NETWORK_TIMEOUT_MS = 8000;
 const CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const LEADERBOARD_SIZE = 10;
+const ANTIBOT_MESSAGE = "La vérification anti-robot (reCAPTCHA) n'a pas pu se faire : désactive ton bloqueur de pub ou ton VPN, puis recharge la page.";
 const RESULTS_READ = 500; // must match database.rules.json
 const ROOM_INTERVAL_MS = 3000; // must match database.rules.json
 const QUEUE_BEAT_MS = 20000;
@@ -47,10 +48,17 @@ const TITLE = "Penalty League";
 const app = initializeApp(firebaseConfig);
 // App Check: the database only answers pages that pass reCAPTCHA on the real
 // site. The local emulators do not check it.
+// If reCAPTCHA cannot run (ad blocker, strict VPN), every database request
+// is refused: remember it to tell the player instead of a misleading error.
+let antiBotFailed = false;
 if (!emulators) {
-  initializeAppCheck(app, {
+  const appCheck = initializeAppCheck(app, {
     provider: new ReCaptchaEnterpriseProvider(recaptchaSiteKey),
     isTokenAutoRefreshEnabled: true,
+  });
+  onTokenChanged(appCheck, () => { antiBotFailed = false; }, () => {
+    antiBotFailed = true;
+    showHomeError(ANTIBOT_MESSAGE);
   });
 }
 const auth = getAuth(app);
@@ -173,14 +181,14 @@ async function loadLeaderboard() {
     const snap = await get(query(ref(db, "results"), orderByChild("at"), limitToLast(RESULTS_READ)));
     const results = [];
     snap.forEach((match) => { results.push(match.val()); });
-    const uids = new Set();
-    for (const r of results) if (r && r.uids) for (const uid of [r.uids.a, r.uids.b]) if (typeof uid === "string") uids.add(uid);
-    const currentNames = {};
-    await Promise.all([...uids].slice(0, 200).map(async (uid) => {
-      const name = (await get(ref(db, `profiles/${uid}/name`))).val();
-      if (name) currentNames[uid] = name;
+    // Rank first, then fetch the current pseudo of the players shown only.
+    const rows = buildLeaderboard(results).slice(0, LEADERBOARD_SIZE);
+    await Promise.all(rows.map(async (row) => {
+      if (!row.uid) return;
+      const name = (await get(ref(db, `profiles/${row.uid}/name`))).val();
+      if (name) row.name = name;
     }));
-    renderLeaderboard(buildLeaderboard(results, currentNames).slice(0, LEADERBOARD_SIZE));
+    renderLeaderboard(rows);
   } catch {
     renderLeaderboard([]);
   }
@@ -228,16 +236,32 @@ async function ensurePseudo() {
     showHomeError("Ton pseudo : lettres, chiffres, espaces, - ou ' (16 caractères max).");
     return null;
   }
-  if (profile && profile.name === name) return name;
   const uid = auth.currentUser.uid;
   const key = name.toLowerCase();
+  try {
+    // Another tab of this browser may have renamed the player meanwhile.
+    profile = (await withTimeout(get(ref(db, `profiles/${uid}`)))).val();
+  } catch (err) {
+    showHomeError(err.message === "timeout" ? OFFLINE_MESSAGE : refusalMessage("Impossible de vérifier ton pseudo, recharge la page."));
+    return null;
+  }
+  if (profile && profile.name === name) return name;
   const data = { [`profiles/${uid}`]: { name, key } };
   if (!profile || profile.key !== key) data[`names/${key}`] = uid;
   if (profile && profile.key !== key) data[`names/${profile.key}`] = null;
   try {
     await withTimeout(update(ref(db), data));
   } catch (err) {
-    showHomeError(err.message === "timeout" ? OFFLINE_MESSAGE : "Ce pseudo est déjà pris, choisis-en un autre.");
+    if (err.message === "timeout") { showHomeError(OFFLINE_MESSAGE); return null; }
+    let owner = null;
+    try {
+      owner = (await withTimeout(get(ref(db, `names/${key}`)))).val();
+    } catch {
+      owner = null;
+    }
+    showHomeError(owner && owner !== uid
+      ? "Ce pseudo est déjà pris, choisis-en un autre."
+      : refusalMessage("Impossible d'enregistrer ce pseudo, recharge la page."));
     return null;
   }
   profile = { name, key };
@@ -304,6 +328,9 @@ function goHome(notice) {
 
 const OFFLINE_MESSAGE = "Pas de connexion au serveur. Vérifie ta connexion et réessaie.";
 
+// Why the database refused a write, for the player.
+const refusalMessage = (fallback) => (antiBotFailed ? ANTIBOT_MESSAGE : fallback);
+
 // Writes a new room with this player as its creator; returns its code.
 // `forUid` reserves the second seat for a matched player. The rules allow
 // one new room every 3 s per player, stamped in limits/{uid}/room.
@@ -321,11 +348,16 @@ async function newRoomCode(name, forUid = null) {
     };
     if (forUid) room.for = forUid;
     try {
-      await withTimeout(update(ref(db), { [`rooms/${code}`]: room, [`limits/${uid}/room`]: serverTimestamp() }));
+      await withTimeout(update(ref(db), {
+        [`rooms/${code}`]: room,
+        [`limits/${uid}/room`]: serverTimestamp(),
+        [`limits/${uid}/code`]: code,
+      }));
       lastRoomAt = serverNow();
       return code;
     } catch (err) {
       if (err.message === "timeout") throw err;
+      if (antiBotFailed) throw new Error("antibot");
       await sleep(400); // code already taken, or another tab just made a room
     }
   }
@@ -347,7 +379,9 @@ async function createRoom() {
   } catch (err) {
     if (err instanceof Cancelled || nav !== t) return;
     endSession();
-    showHomeError(err.message === "no free code" ? "Impossible de créer un salon, réessaie." : OFFLINE_MESSAGE);
+    showHomeError(err.message === "antibot" ? ANTIBOT_MESSAGE
+      : err.message === "no free code" ? "Impossible de créer un salon, réessaie."
+      : OFFLINE_MESSAGE);
   } finally {
     setHomeEnabled(true);
   }
@@ -436,8 +470,8 @@ async function startSearch(notice) {
   try {
     await withTimeout(onDisconnect(entry).remove());
     await withTimeout(set(entry, { name, at: serverTimestamp() }));
-  } catch {
-    if (nav === t) goHome(OFFLINE_MESSAGE);
+  } catch (err) {
+    if (nav === t) goHome(err.message === "timeout" ? OFFLINE_MESSAGE : refusalMessage("Impossible de lancer la recherche, recharge la page."));
     return;
   } finally {
     setHomeEnabled(true);
@@ -518,6 +552,11 @@ async function onQueue(s) {
     // Someone else matched them first, we got matched, or the network failed.
     if (err instanceof Cancelled || nav !== t) return;
     endSession();
+    // Our own room could not be created: retrying would fail the same way.
+    if (err.message === "antibot" || err.message === "no free code") {
+      goHome(err.message === "antibot" ? ANTIBOT_MESSAGE : "Impossible de créer un salon, réessaie.");
+      return;
+    }
     if (refused) s.tried.add(key(otherUid, other));
     if (search === s) {
       s.busy = false;

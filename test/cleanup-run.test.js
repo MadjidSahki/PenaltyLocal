@@ -65,6 +65,8 @@ test("cleanup goes through many old rooms in batches", async () => {
   const rooms = {};
   for (let i = 0; i < 650; i++) rooms[`R${String(i).padStart(3, "0")}`] = { players: { a: "u" }, names: { a: "A" }, createdAt: now - 48 * HOUR + i };
   await put("", { rooms });
+  const dry = await runCleanup(["--dry-run"]);
+  assert.match(dry, /would remove 650 room/i);
   await runCleanup();
   assert.equal(await read("rooms"), null);
 });

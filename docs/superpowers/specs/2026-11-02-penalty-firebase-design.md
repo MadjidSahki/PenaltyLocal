@@ -34,8 +34,8 @@ from GitHub Actions.
 
 ## Constraints / decided
 
-- Static client on Firebase Hosting; Firebase JS SDK 13.2.0 loaded as ES modules
-  from gstatic; no build step.
+- Static client on Firebase Hosting; Firebase JS SDK 13.2.0 as ES modules, copied
+  into public/vendor/firebase (imports made relative); no build step.
 - Firebase Anonymous Auth with **local persistence**: the browser keeps the same
   player between visits (two tabs of one browser are the same player).
 - Pseudos are reserved: `names/{lowercase}` maps a pseudo to one player and
@@ -62,7 +62,12 @@ from GitHub Actions.
   result record or set rematch flags early; this only affects the scoreboard.
 - The scoreboard reads only the latest 500 results (rules: ordered by `at`,
   limited), and a normal result needs a match of at least 6 shots.
-- A player can create at most one room every 3 s (`limits/{uid}/room`).
+- A player can create at most one room every 3 s: the room write must come
+  with `limits/{uid}/room` (server time) and `limits/{uid}/code` (that room's
+  code), so one stamp allows exactly one room. Profiles cannot be deleted.
+  Results can only be read as the latest 500, without start/end bounds.
+- html/js/css are served with `Cache-Control: no-cache`, so players get a
+  new version right after a deploy (vendor files are cached a day).
 - Nightly cleanup (`.github/workflows/cleanup.yml`, `scripts/cleanup.js`, run
   with the deploy service account): removes rooms created more than 24 h ago
   (unless used in the last hour) with their choices, queue entries idle for
