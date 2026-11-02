@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Penalty 1v1</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <main id="app">
+    <!-- HOME -->
+    <section id="view-home" class="view is-active">
+      <h1 class="title">Penalty <span>1v1</span></h1>
+      <p class="tagline">Duel de tirs au but sur le réseau local</p>
+
+      <div class="card">
+        <label class="field">
+          <span>Ton pseudo</span>
+          <input id="nickname" type="text" maxlength="16" placeholder="Ex : Zizou" />
+        </label>
+
+        <button id="btn-create" class="btn btn-primary">Créer un salon</button>
+
+        <div class="sep"><span>ou</span></div>
+
+        <label class="field">
+          <span>Code du salon</span>
+          <input id="join-code" type="text" maxlength="4" placeholder="ABCD" autocapitalize="characters" />
+        </label>
+        <button id="btn-join" class="btn">Rejoindre</button>
+
+        <p id="home-error" class="error" hidden></p>
+      </div>
+    </section>
+
+    <!-- LOBBY -->
+    <section id="view-lobby" class="view">
+      <h2>Salon créé</h2>
+      <p>Partage ce code avec ton adversaire :</p>
+      <div id="lobby-code" class="code-display">----</div>
+      <p class="muted">En attente d'un adversaire…</p>
+      <div class="spinner"></div>
+    </section>
+
+    <!-- MATCH -->
+    <section id="view-match" class="view">
+      <div class="scoreboard">
+        <div class="side side-a">
+          <div class="pname" id="name-a">A</div>
+          <div class="pscore" id="score-a">0</div>
+        </div>
+        <div class="vs">—</div>
+        <div class="side side-b">
+          <div class="pname" id="name-b">B</div>
+          <div class="pscore" id="score-b">0</div>
+        </div>
+      </div>
+
+      <div id="role-banner" class="role-banner">À toi de jouer</div>
+
+      <div class="clock-wrap">
+        <div id="clock" class="clock">10</div>
+      </div>
+
+      <!-- Original abstract scene: pitch, goal frame, ball, keeper -->
+      <div class="scene" id="scene">
+        <div class="goal">
+          <div class="goal-zone zone-left" data-zone="left"></div>
+          <div class="goal-zone zone-center" data-zone="center"></div>
+          <div class="goal-zone zone-right" data-zone="right"></div>
+          <div class="keeper" id="keeper"></div>
+        </div>
+        <div class="ball" id="ball"></div>
+        <div id="result-banner" class="result-banner" hidden></div>
+      </div>
+
+      <div class="controls" id="controls">
+        <button class="btn btn-zone" data-zone="left">◀ Gauche</button>
+        <button class="btn btn-zone" data-zone="center">▲ Centre</button>
+        <button class="btn btn-zone" data-zone="right">Droite ▶</button>
+      </div>
+      <p id="match-status" class="muted"></p>
+    </section>
+
+    <!-- MATCH OVER -->
+    <section id="view-over" class="view">
+      <h2 id="over-title">Match terminé</h2>
+      <div id="over-score" class="code-display">0 — 0</div>
+      <button id="btn-rematch" class="btn btn-primary">Rejouer</button>
+      <button id="btn-home" class="btn">Retour à l'accueil</button>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
