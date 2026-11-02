@@ -1,12 +1,15 @@
+(function (root) {
+"use strict";
+
 const ZONES = ["left", "center", "right"];
 
 const REGULATION_SHOTS = 5;
 
-function createMatch() {
+function createMatch({ firstShooter = "a" } = {}) {
   return {
     scores: { a: 0, b: 0 },
     shotsTaken: { a: 0, b: 0 },
-    shooter: "a",
+    shooter: firstShooter,
     round: 1,
     phase: "regulation",
     status: "playing",
@@ -161,10 +164,34 @@ function roundResult(state) {
   return state.lastResult;
 }
 
-module.exports = {
+// Resolves the current round from both players' final choices
+// ({a, b}; null = that player did not choose in time).
+function applyRound(state, choices) {
+  const shooter = state.shooter;
+  const keeper = keeperOf(shooter);
+  const shooterZone = choices[shooter] == null ? null : choices[shooter];
+  const keeperZone = choices[keeper] == null ? null : choices[keeper];
+  if (shooterZone === null) {
+    if (keeperZone === null) return submitTimeout(state, shooter);
+    const k = submitChoice(state, keeper, keeperZone);
+    if (!k.ok) return k;
+    return submitTimeout(k.state, shooter);
+  }
+  const r = submitChoice(state, shooter, shooterZone);
+  if (!r.ok) return r;
+  if (keeperZone === null) return submitTimeout(r.state, keeper);
+  return submitChoice(r.state, keeper, keeperZone);
+}
+
+const api = {
   ZONES,
   createMatch,
   submitChoice,
   submitTimeout,
   roundResult,
+  applyRound,
 };
+
+if (typeof module !== "undefined" && module.exports) module.exports = api;
+else root.PenaltyMatch = api;
+})(typeof self !== "undefined" ? self : this);

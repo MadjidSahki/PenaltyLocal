@@ -1,6 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert");
-const { createMatch, submitChoice, ZONES } = require("../src/match");
+const { createMatch, submitChoice, ZONES } = require("../public/match");
 
 test("fresh match: a shoots first, scores zero, playing", () => {
   const m = createMatch();
@@ -72,7 +72,7 @@ test("tie after 5 each => sudden death phase", () => {
 });
 
 test("shooter timeout => missed shot, no goal, round advances", () => {
-  const { submitTimeout } = require("../src/match");
+  const { submitTimeout } = require("../public/match");
   let m = createMatch(); // a is shooter
   const r = submitTimeout(m, "a");
   assert.equal(r.ok, true);
@@ -81,7 +81,7 @@ test("shooter timeout => missed shot, no goal, round advances", () => {
 });
 
 test("keeper timeout => goal conceded", () => {
-  const { submitTimeout } = require("../src/match");
+  const { submitTimeout } = require("../public/match");
   let m = createMatch(); // a shooter, b keeper
   const r = submitTimeout(m, "b");
   assert.equal(r.ok, true);
@@ -89,7 +89,7 @@ test("keeper timeout => goal conceded", () => {
 });
 
 test("timeout after that player already chose is rejected", () => {
-  const { submitTimeout } = require("../src/match");
+  const { submitTimeout } = require("../public/match");
   let m = submitChoice(createMatch(), "a", "left").state; // shooter a locked in
   const r = submitTimeout(m, "a");
   assert.equal(r.ok, false);
@@ -97,4 +97,53 @@ test("timeout after that player already chose is rejected", () => {
 
 test("ZONES are the three expected zones", () => {
   assert.deepEqual([...ZONES].sort(), ["center", "left", "right"]);
+});
+
+test("createMatch can start with b shooting", () => {
+  const m = createMatch({ firstShooter: "b" });
+  assert.equal(m.shooter, "b");
+});
+
+test("applyRound: both chose different zones => goal for the shooter", () => {
+  const { applyRound } = require("../public/match");
+  const r = applyRound(createMatch(), { a: "left", b: "right" });
+  assert.equal(r.ok, true);
+  assert.equal(r.state.scores.a, 1);
+  assert.equal(r.state.lastResult.timedOut, null);
+});
+
+test("applyRound: shooter missing => shooter timeout, no goal", () => {
+  const { applyRound } = require("../public/match");
+  const r = applyRound(createMatch(), { a: null, b: "left" });
+  assert.equal(r.state.scores.a, 0);
+  assert.equal(r.state.lastResult.timedOut, "a");
+  assert.equal(r.state.lastResult.keeperZone, "left");
+});
+
+test("applyRound: keeper missing => goal conceded, shooter zone kept", () => {
+  const { applyRound } = require("../public/match");
+  const r = applyRound(createMatch(), { a: "center", b: null });
+  assert.equal(r.state.scores.a, 1);
+  assert.equal(r.state.lastResult.timedOut, "b");
+  assert.equal(r.state.lastResult.shooterZone, "center");
+});
+
+test("applyRound: nobody chose => counts as the shooter's timeout", () => {
+  const { applyRound } = require("../public/match");
+  const r = applyRound(createMatch(), { a: null, b: null });
+  assert.equal(r.state.scores.a, 0);
+  assert.equal(r.state.lastResult.timedOut, "a");
+});
+
+test("applyRound replays a whole match identically to choice-by-choice play", () => {
+  const { applyRound } = require("../public/match");
+  let m = createMatch({ firstShooter: "b" });
+  const rounds = [
+    { a: "left", b: "right" }, { a: "left", b: "left" }, { a: null, b: "center" },
+    { a: "right", b: null }, { a: "center", b: "left" }, { a: "left", b: "right" },
+  ];
+  for (const c of rounds) m = applyRound(m, c).state;
+  assert.deepEqual(m.shotsTaken, { a: 3, b: 3 });
+  assert.equal(m.round, 7);
+  assert.equal(m.shooter, "b");
 });

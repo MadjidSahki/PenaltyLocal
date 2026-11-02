@@ -1,8 +1,18 @@
 {
-  "name": "penalty-1v1",
-  "version": "1.0.0",
+  "name": "penalty-league",
+  "version": "2.0.0",
   "private": true,
   "type": "commonjs",
-  "scripts": { "start": "node src/server.js", "test": "node --test" },
-  "dependencies": { "ws": "^8.18.0" }
+  "scripts": {
+    "start": "firebase emulators:start --only auth,database,hosting --project demo-penalty",
+    "test": "node --test test/match.test.js test/stats.test.js",
+    "test:rules": "firebase emulators:exec --only database --project demo-penalty \"node --test test/rules.test.js\"",
+    "test:all": "npm test && npm run test:rules",
+    "deploy": "firebase deploy --only hosting,database,auth --project penaltyleague"
+  },
+  "devDependencies": {
+    "@firebase/rules-unit-testing": "6.0.0",
+    "firebase": "13.2.0",
+    "firebase-tools": "15.34.2"
+  }
 }

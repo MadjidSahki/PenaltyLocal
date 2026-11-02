@@ -209,3 +209,21 @@ body {
 .controls.disabled .btn-zone { opacity: 0.45; pointer-events: none; }
 
 #match-status { margin-top: 10px; min-height: 1.2em; }
+
+.btn-ghost {
+  background: transparent; color: #fff; border: 2px solid rgba(255,255,255,0.6);
+  margin-top: 18px; width: auto; padding: 10px 22px;
+}
+
+.leaderboard { margin-top: 18px; }
+.leaderboard h2 { margin: 0 0 10px; font-size: 1.2rem; }
+.leaderboard table { width: 100%; border-collapse: collapse; font-size: 0.95rem; }
+.leaderboard th, .leaderboard td { padding: 7px 6px; text-align: center; }
+.leaderboard th:nth-child(2), .leaderboard td:nth-child(2) {
+  text-align: left; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.leaderboard thead th { color: #6b7378; font-weight: 700; border-bottom: 2px solid #eceff1; }
+.leaderboard tbody tr + tr td { border-top: 1px solid #f1f3f4; }
+.leaderboard tbody tr:first-child td { font-weight: 800; }
+.leaderboard td:nth-child(3) { font-weight: 700; color: #1b5e20; }
+.lb-empty { color: #9aa0a6; margin: 8px 0 0; text-align: center; }

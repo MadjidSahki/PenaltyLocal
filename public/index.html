@@ -3,15 +3,15 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Penalty 1v1</title>
+  <title>Penalty League</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
   <main id="app">
     <!-- HOME -->
     <section id="view-home" class="view is-active">
-      <h1 class="title">Penalty <span>1v1</span></h1>
-      <p class="tagline">Duel de tirs au but sur le réseau local</p>
+      <h1 class="title">Penalty <span>League</span></h1>
+      <p class="tagline">Duel de tirs au but en ligne, à deux</p>
 
       <div class="card">
         <label class="field">
@@ -31,6 +31,17 @@
 
         <p id="home-error" class="error" hidden></p>
       </div>
+
+      <div class="card leaderboard">
+        <h2>Classement</h2>
+        <table>
+          <thead>
+            <tr><th>#</th><th>Joueur</th><th title="Victoires">V</th><th title="Défaites">D</th><th title="Buts marqués">Buts</th></tr>
+          </thead>
+          <tbody id="lb-body"></tbody>
+        </table>
+        <p id="lb-empty" class="lb-empty">Aucun match joué pour l'instant.</p>
+      </div>
     </section>
 
     <!-- LOBBY -->
@@ -40,6 +51,7 @@
       <div id="lobby-code" class="code-display">----</div>
       <p class="muted">En attente d'un adversaire…</p>
       <div class="spinner"></div>
+      <button id="btn-cancel" class="btn btn-ghost">Annuler</button>
     </section>
 
     <!-- MATCH -->
@@ -92,6 +104,8 @@
     </section>
   </main>
 
-  <script src="app.js"></script>
+  <script src="match.js"></script>
+  <script src="stats.js"></script>
+  <script type="module" src="app.js"></script>
 </body>
 </html>
