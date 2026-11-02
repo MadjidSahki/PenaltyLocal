@@ -70,6 +70,13 @@ the spirit of games like Penalty Mentality but with an entirely original look
   the scores differ the match ends; otherwise another pair.
 - Shooter picks one of {left, center, right}. Keeper picks one of
   {left, center, right}. Equal → save (no goal). Unequal → goal.
+- **Shot clock:** each player has 10 seconds per round to choose a zone.
+  If the shooter runs out of time, it counts as a missed shot (no goal).
+  If the keeper runs out of time, it counts as a goal conceded. The
+  server owns the clock and decides the timeout; the client shows a
+  countdown but never decides the outcome. A player's timeout resolves
+  as if they had chosen the zone that gives the opponent the result:
+  shooter timeout = no goal, keeper timeout = goal.
 
 ## Flow
 
@@ -99,6 +106,9 @@ the spirit of games like Penalty Mentality but with an entirely original look
   0/O/1/I). (My call.)
 - Simultaneous secret choice per turn: both shooter and keeper submit; server
   reveals only after both are in. (My call, follows the anti-goal.)
+- Shot clock of 10 seconds per round, server-owned. Timeout resolves as a
+  non-choice: shooter timeout = missed shot, keeper timeout = goal conceded.
+  The client shows a countdown only. (My call, agreed with user.)
 - Animation via CSS transforms on DOM elements (ball + keeper), which keeps
   the client simple and dependency-free. (My call; implementer may use canvas
   if cleaner.)
