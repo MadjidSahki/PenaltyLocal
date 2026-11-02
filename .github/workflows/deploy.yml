@@ -43,11 +43,13 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - name: Deploy site, database rules and auth settings
+      # The Anonymous Auth setting is applied once with `npm run deploy` (owner
+      # account); the deploy service account only publishes the site and rules.
+      - name: Deploy site and database rules
         env:
           FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
         run: |
           printf '%s' "$FIREBASE_SERVICE_ACCOUNT" > "$RUNNER_TEMP/service-account.json"
           export GOOGLE_APPLICATION_CREDENTIALS="$RUNNER_TEMP/service-account.json"
-          npx firebase deploy --only hosting,database,auth --project penaltyleague --non-interactive
+          npx firebase deploy --only hosting,database --project penaltyleague --non-interactive
           rm -f "$RUNNER_TEMP/service-account.json"
