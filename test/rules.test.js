@@ -292,6 +292,13 @@ test("matches cannot be skipped or created twice", async () => {
   await assertFails(newMatch("alice", 3));
 });
 
+test("a match cannot start while a player is not present", async () => {
+  await set(ref(db("alice"), `rooms/${CODE}`), newRoom("alice"));
+  await join("bob");
+  await remove(ref(db("alice"), `rooms/${CODE}/presence/a`));
+  await assertFails(newMatch("bob", 1));
+});
+
 test("a new match cannot come with rematch flags already set", async () => {
   await set(ref(db("alice"), `rooms/${CODE}`), newRoom("alice"));
   await join("bob");
@@ -335,13 +342,36 @@ test("strangers cannot store results", async () => {
   await assertFails(set(ref(db("carol"), `results/${CODE}/1`), resultFor()));
 });
 
+const forfeitFor = (winner) =>
+  resultFor({ a: { name: "Alice", goals: 0 }, b: { name: "Bob", goals: 1 }, winner, forfeit: true });
+const started = { locks: { 1: { 1: { a: Date.now() - 1000 } } } };
+
 test("a forfeit is stored only once the loser has really left", async () => {
-  await seedRoom();
-  const forfeit = resultFor({ a: { name: "Alice", goals: 0 }, b: { name: "Bob", goals: 1 }, winner: "b", forfeit: true });
-  await assertFails(set(ref(db("bob"), `results/${CODE}/1`), { ...forfeit, forfeit: "yes" }));
-  await assertFails(set(ref(db("bob"), `results/${CODE}/1`), forfeit)); // alice is still there
+  await seedRoom({ extra: started });
+  await assertFails(set(ref(db("bob"), `results/${CODE}/1`), { ...forfeitFor("b"), forfeit: "yes" }));
+  await assertFails(set(ref(db("bob"), `results/${CODE}/1`), forfeitFor("b"))); // alice is still there
   await remove(ref(db("alice"), `rooms/${CODE}/presence/a`));
-  await assertSucceeds(set(ref(db("bob"), `results/${CODE}/1`), forfeit));
+  await assertSucceeds(set(ref(db("bob"), `results/${CODE}/1`), forfeitFor("b")));
+});
+
+test("a forfeit for player a needs player b gone", async () => {
+  await seedRoom({ extra: started });
+  await assertFails(set(ref(db("alice"), `results/${CODE}/1`), forfeitFor("a")));
+  await remove(ref(db("bob"), `rooms/${CODE}/presence/b`));
+  await assertSucceeds(set(ref(db("alice"), `results/${CODE}/1`), forfeitFor("a")));
+});
+
+test("a forfeit needs the winner still present", async () => {
+  await seedRoom({ extra: started });
+  await remove(ref(db("alice"), `rooms/${CODE}/presence/a`));
+  await remove(ref(db("bob"), `rooms/${CODE}/presence/b`));
+  await assertFails(set(ref(db("bob"), `results/${CODE}/1`), forfeitFor("b")));
+});
+
+test("no forfeit before anyone has played a shot of the match", async () => {
+  await seedRoom();
+  await remove(ref(db("alice"), `rooms/${CODE}/presence/a`));
+  await assertFails(set(ref(db("bob"), `results/${CODE}/1`), forfeitFor("b")));
 });
 
 test("results must match the room and be well-formed", async () => {
@@ -385,28 +415,57 @@ test("signed-in players can read the queue, visitors cannot", async () => {
   await assertFails(get(ref(anon(), "queue")));
 });
 
-test("a waiting player can be matched once, into a room the matcher created", async () => {
+const roomFor = (creator, name, target) => ({ ...newRoom(creator, name), for: target });
+
+test("a waiting player can be matched once, into a room the matcher created for them", async () => {
   await enqueue("alice");
-  await set(ref(db("bob"), `rooms/${CODE}`), newRoom("bob", "Bob"));
+  await set(ref(db("bob"), `rooms/${CODE}`), roomFor("bob", "Bob", "alice"));
   await assertSucceeds(set(ref(db("bob"), "queue/alice/room"), CODE));
   await assertFails(set(ref(db("carol"), "queue/alice/room"), "ZZ99"));
 });
 
 test("a player cannot be matched into a room that is not the matcher's", async () => {
   await enqueue("alice");
-  await set(ref(db("dave"), `rooms/${CODE}`), newRoom("dave", "Dave"));
+  await set(ref(db("dave"), `rooms/${CODE}`), roomFor("dave", "Dave", "alice"));
   await assertFails(set(ref(db("bob"), "queue/alice/room"), CODE));
+});
+
+test("a player cannot be matched into a room made for someone else, or for nobody", async () => {
+  await enqueue("alice");
+  await set(ref(db("bob"), `rooms/${CODE}`), roomFor("bob", "Bob", "carol"));
+  await assertFails(set(ref(db("bob"), "queue/alice/room"), CODE));
+  await set(ref(db("bob"), "rooms/CD45"), newRoom("bob", "Bob"));
+  await assertFails(set(ref(db("bob"), "queue/alice/room"), "CD45"));
+});
+
+test("a player cannot be matched into a room whose creator is not present", async () => {
+  await enqueue("alice");
+  await set(ref(db("bob"), `rooms/${CODE}`), { ...roomFor("bob", "Bob", "alice"), presence: null });
+  await assertFails(set(ref(db("bob"), "queue/alice/room"), CODE));
+});
+
+test("only the matched player can take the second seat of a matchmaking room", async () => {
+  await set(ref(db("bob"), `rooms/${CODE}`), roomFor("bob", "Bob", "alice"));
+  await assertFails(join("carol", "Carol"));
+  await assertSucceeds(join("alice", "Alice"));
+});
+
+test("a queue entry cannot keep an old waiting time", async () => {
+  await seed((d) => set(ref(d, "queue/alice"), { name: "Alice", at: Date.now() - 60000 }));
+  const old = (await get(ref(db("alice"), "queue/alice/at"))).val();
+  await assertFails(set(ref(db("alice"), "queue/alice"), { name: "Alice", at: old }));
+  await assertSucceeds(set(ref(db("alice"), "queue/alice"), { name: "Alice", at: serverTimestamp() }));
 });
 
 test("a player cannot be matched into a room that is already full", async () => {
   await enqueue("alice");
-  await seedRoom(); // alice and bob already play there
+  await seedRoom({ extra: { for: "carol" } }); // alice and bob already play there
   await assertFails(set(ref(db("alice"), "queue/carol/room"), CODE));
   await set(ref(db("carol"), "queue/carol"), { name: "Carol", at: serverTimestamp() });
   await assertFails(set(ref(db("bob"), "queue/carol/room"), CODE));
 });
 
 test("nobody can be matched while not waiting", async () => {
-  await set(ref(db("bob"), `rooms/${CODE}`), newRoom("bob", "Bob"));
+  await set(ref(db("bob"), `rooms/${CODE}`), roomFor("bob", "Bob", "alice"));
   await assertFails(set(ref(db("bob"), "queue/alice/room"), CODE));
 });

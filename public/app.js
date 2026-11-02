@@ -32,6 +32,7 @@ const START_MARGIN_MS = 250; // covers the error of the server time estimate
 const NETWORK_TIMEOUT_MS = 8000;
 const CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const LEADERBOARD_SIZE = 10;
+const TITLE = "Penalty League";
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
@@ -188,17 +189,33 @@ function pseudo() {
 const roomPath = (s, rest = "") => `rooms/${s.code}${rest}`;
 const otherSlot = (slot) => (slot === "a" ? "b" : "a");
 
-async function startSession(code, slot) {
-  session = { code, slot, room: null, m: 0, opponentSeen: false, timer: null };
-  const s = session;
+// Every return to the home screen bumps `nav`; an async step that sees a
+// different value was cancelled by the player and must stop.
+let nav = 0;
+class Cancelled extends Error {}
+
+// Becomes present in a room and starts following it. Throws Cancelled if the
+// player went back home meanwhile (and then leaves no presence behind).
+async function startSession(code, slot, { opponentPresent = false, fromQueue = false } = {}) {
+  const s = { code, slot, room: null, m: 0, opponentSeen: opponentPresent, fromQueue, timer: null };
+  session = s;
+  const presence = ref(db, `rooms/${code}/presence/${slot}`);
+  const abandoned = () => {
+    if (session === s) return false;
+    remove(presence).catch(() => {});
+    onDisconnect(presence).cancel().catch(() => {});
+    return true;
+  };
   // Register the disconnect cleanup before announcing presence, so a tab
   // closed in between never leaves a ghost player behind.
-  const presence = ref(db, `rooms/${code}/presence/${slot}`);
   await withTimeout(onDisconnect(presence).remove());
+  if (abandoned()) throw new Cancelled();
   await withTimeout(set(presence, true));
+  if (abandoned()) throw new Cancelled();
   s.unsubscribe = onValue(ref(db, `rooms/${code}`), (snap) => {
     if (session === s) onRoom(s, snap.val());
   });
+  return s;
 }
 
 function endSession() {
@@ -216,8 +233,10 @@ function endSession() {
 }
 
 function goHome(notice) {
+  nav += 1;
   stopSearch();
   endSession();
+  document.title = TITLE;
   showView("home");
   if (notice) showHomeError(notice);
   else el.homeError.hidden = true;
@@ -227,15 +246,18 @@ function goHome(notice) {
 const OFFLINE_MESSAGE = "Pas de connexion au serveur. Vérifie ta connexion et réessaie.";
 
 // Writes a new room with this player as its creator; returns its code.
-async function newRoomCode(name) {
+// `forUid` reserves the second seat for a matched player.
+async function newRoomCode(name, forUid = null) {
   for (let attempt = 0; attempt < 6; attempt++) {
     const code = randomCode();
+    const room = {
+      players: { a: auth.currentUser.uid },
+      names: { a: name },
+      createdAt: serverTimestamp(),
+    };
+    if (forUid) room.for = forUid;
     try {
-      await withTimeout(set(ref(db, `rooms/${code}`), {
-        players: { a: auth.currentUser.uid },
-        names: { a: name },
-        createdAt: serverTimestamp(),
-      }));
+      await withTimeout(set(ref(db, `rooms/${code}`), room));
       return code;
     } catch (err) {
       if (err.message === "timeout") throw err;
@@ -251,12 +273,15 @@ async function createRoom() {
   localStorage.setItem("pseudo", name);
   el.homeError.hidden = true;
   setHomeEnabled(false);
+  const t = nav;
   try {
     const code = await newRoomCode(name);
+    if (nav !== t) return;
     await startSession(code, "a");
     el.lobbyCode.textContent = code;
     showView("lobby");
   } catch (err) {
+    if (err instanceof Cancelled || nav !== t) return;
     endSession();
     showHomeError(err.message === "no free code" ? "Impossible de créer un salon, réessaie." : OFFLINE_MESSAGE);
   } finally {
@@ -277,34 +302,47 @@ async function joinRoom() {
   setHomeEnabled(false);
   try {
     const problem = await joinRoomCode(code, name);
-    if (problem) showHomeError(problem);
+    if (problem) goHome(problem);
   } finally {
     setHomeEnabled(true);
   }
 }
 
 // Joins a room as its second player and starts match 1. Returns an error
-// message for the player, or null once the match is starting.
-async function joinRoomCode(code, name) {
+// message for the player, or null once the match is starting (or if the
+// player cancelled meanwhile).
+async function joinRoomCode(code, name, { fromQueue = false } = {}) {
+  const t = nav;
+  const cancelled = () => nav !== t;
   try {
     const uid = auth.currentUser.uid;
     const room = (await withTimeout(get(ref(db, `rooms/${code}`)))).val();
+    if (cancelled()) return null;
     if (!room) return "Salon introuvable.";
     if (room.players.a === uid) return "C'est ton propre salon : donne le code à ton adversaire.";
-    if (room.players.b) return "Ce salon est déjà complet.";
+    if (room.players.b || (room.for && room.for !== uid)) return "Ce salon est déjà complet.";
     if (!room.presence || !room.presence.a) return "Le créateur a quitté ce salon.";
     try {
       await withTimeout(update(ref(db, `rooms/${code}`), { "players/b": uid, "names/b": name }));
     } catch (err) {
       return err.message === "timeout" ? OFFLINE_MESSAGE : "Impossible de rejoindre ce salon.";
     }
-    await startSession(code, "b");
-    await set(ref(db, `rooms/${code}/matches/1`), {
-      n: 1,
-      rounds: { 1: { n: 1, startedAt: serverTimestamp() } },
-    }).catch(() => {});
+    if (cancelled()) return null;
+    // The creator was present a moment ago, so leaving now counts as leaving.
+    const s = await startSession(code, "b", { opponentPresent: true, fromQueue });
+    try {
+      await withTimeout(set(ref(db, `rooms/${code}/matches/1`), {
+        n: 1,
+        rounds: { 1: { n: 1, startedAt: serverTimestamp() } },
+      }));
+    } catch (err) {
+      if (session === s) endSession();
+      if (cancelled()) return null;
+      return err.message === "timeout" ? OFFLINE_MESSAGE : "Le créateur a quitté ce salon.";
+    }
     return null;
-  } catch {
+  } catch (err) {
+    if (err instanceof Cancelled || cancelled()) return null;
     endSession();
     return OFFLINE_MESSAGE;
   }
@@ -312,35 +350,41 @@ async function joinRoomCode(code, name) {
 
 // ---------- matchmaking ----------
 // Waiting players sit in queue/{uid}. The newer player of a pair does the
-// matching: it creates a room with the room engine, writes its code into the
-// older player's entry (write-once), and the older player joins that room.
+// matching: it creates a room reserved for the older player (room engine),
+// becomes present in it, then writes its code into the older player's entry
+// (write-once). The older player joins that room.
 
 const MATCH_JOIN_TIMEOUT_MS = 15000;
+const MATCH_START_TIMEOUT_MS = 10000;
 let search = null;
 
 async function startSearch(notice) {
   const name = pseudo();
-  if (!name) { showHomeError("Choisis un pseudo."); return; }
+  if (!name) { goHome("Choisis un pseudo."); return; }
   localStorage.setItem("pseudo", name);
   el.homeError.hidden = true;
   setHomeEnabled(false);
+  const t = nav;
   const uid = auth.currentUser.uid;
   const entry = ref(db, `queue/${uid}`);
   try {
     await withTimeout(onDisconnect(entry).remove());
     await withTimeout(set(entry, { name, at: serverTimestamp() }));
   } catch {
-    showHomeError(OFFLINE_MESSAGE);
+    if (nav === t) goHome(OFFLINE_MESSAGE);
     return;
   } finally {
     setHomeEnabled(true);
   }
-  const s = { name, uid, entry, busy: false, tried: new Set() };
+  if (nav !== t) { remove(entry).catch(() => {}); return; }
+  const s = { name, uid, entry, busy: false, tried: new Set(), last: {} };
   search = s;
   el.searchStatus.textContent = notice || "En attente d'un autre joueur…";
   showView("search");
   s.unsubscribe = onValue(ref(db, "queue"), (snap) => {
-    if (search === s) onQueue(s, snap.val() || {});
+    if (search !== s) return;
+    s.last = snap.val() || {};
+    onQueue(s);
   });
 }
 
@@ -353,53 +397,82 @@ function stopSearch() {
   remove(s.entry).catch(() => {});
 }
 
-async function onQueue(s, queue) {
+// Back to the queue from a matchmaking room that did not turn into a match.
+function requeue(notice) {
+  endSession();
+  startSearch(notice);
+}
+
+async function onQueue(s) {
+  if (search !== s || s.busy) return;
+  const queue = s.last;
   const mine = queue[s.uid];
-  if (!mine || s.busy) return;
+  if (!mine) return;
+  const t = nav;
 
   if (mine.room) {
     // Someone matched us: join their room.
     s.busy = true;
     stopSearch();
     el.searchStatus.textContent = "Adversaire trouvé, connexion…";
-    const problem = await joinRoomCode(mine.room, s.name);
-    if (problem && !session) startSearch("Nouvelle recherche…");
+    const problem = await joinRoomCode(mine.room, s.name, { fromQueue: true });
+    if (problem && nav === t && !session) startSearch("Nouvelle recherche…");
     return;
   }
 
+  const key = (uid, e) => `${uid}:${e.at}`;
   const candidates = Object.entries(queue)
-    .filter(([uid, e]) => uid !== s.uid && e && !e.room && typeof e.at === "number" && !s.tried.has(uid))
+    .filter(([uid, e]) => uid !== s.uid && e && !e.room && typeof e.at === "number" && !s.tried.has(key(uid, e)))
     .filter(([uid, e]) => e.at < mine.at || (e.at === mine.at && uid < s.uid))
-    .sort((x, y) => x[1].at - y[1].at);
+    .sort((x, y) => x[1].at - y[1].at || (x[0] < y[0] ? -1 : 1));
   if (!candidates.length) return;
 
   const [otherUid, other] = candidates[0];
   s.busy = true;
-  s.tried.add(otherUid);
   el.searchStatus.textContent = `Adversaire trouvé : ${other.name}…`;
+  let refused = false;
   try {
     // Be present in the room before telling the other player where it is.
-    const code = await newRoomCode(s.name);
-    await startSession(code, "a");
-    await withTimeout(set(ref(db, `queue/${otherUid}/room`), code));
-  } catch {
-    // Someone else matched them first (or the network failed): keep looking.
+    const code = await newRoomCode(s.name, otherUid);
+    if (nav !== t) return;
+    await startSession(code, "a", { fromQueue: true });
+    const meNow = s.last[s.uid];
+    if (meNow && meNow.room) throw new Error("matched meanwhile");
+    try {
+      await withTimeout(set(ref(db, `queue/${otherUid}/room`), code));
+    } catch (err) {
+      refused = err.message !== "timeout";
+      throw err;
+    }
+  } catch (err) {
+    // Someone else matched them first, we got matched, or the network failed.
+    if (err instanceof Cancelled || nav !== t) return;
     endSession();
+    if (refused) s.tried.add(key(otherUid, other));
     if (search === s) {
       s.busy = false;
       el.searchStatus.textContent = "En attente d'un autre joueur…";
+      setTimeout(() => onQueue(s), 0); // re-check what changed meanwhile
     }
     return;
   }
-  if (search !== s) { endSession(); return; } // cancelled meanwhile
+  if (nav !== t || search !== s) { endSession(); return; }
   stopSearch();
-  // If they never show up, go back to the queue.
-  const room = session;
-  room.joinTimer = setTimeout(() => {
-    if (session === room && !room.m) {
-      endSession();
-      startSearch("L'adversaire ne s'est pas connecté, nouvelle recherche…");
+  watchMatchedRoom(session);
+}
+
+// The matched player has 15 s to take the seat, then 10 s more to start.
+function watchMatchedRoom(s) {
+  s.joinTimer = setTimeout(() => {
+    if (session !== s || s.m) return;
+    const seated = s.room && s.room.players && s.room.players.b;
+    if (!seated) {
+      requeue("L'adversaire ne s'est pas connecté, nouvelle recherche…");
+      return;
     }
+    s.joinTimer = setTimeout(() => {
+      if (session === s && !s.m) requeue("L'adversaire ne s'est pas connecté, nouvelle recherche…");
+    }, MATCH_START_TIMEOUT_MS);
   }, MATCH_JOIN_TIMEOUT_MS);
 }
 
@@ -415,10 +488,18 @@ function onRoom(s, room) {
   const oppPresent = !!(room.presence && room.presence[opp]);
   if (oppPresent) s.opponentSeen = true;
   if (s.opponentSeen && !oppPresent) {
-    if (s.m && !s.over && s.match && s.match.status !== "finished") {
+    if (!s.m && s.fromQueue) {
+      requeue("L'adversaire est parti, nouvelle recherche…");
+    } else if (s.m && !s.over && s.match && s.match.status !== "finished" && room.locks && room.locks[s.m]) {
+      // A started match: the one who stayed records the forfeit.
+      const opponentName = room.names[opp];
       const saving = saveResult(s, { winner: s.slot, forfeit: true });
-      goHome(`${room.names[opp]} a quitté le match : victoire par forfait !`);
-      saving.then(loadLeaderboard);
+      goHome("L'adversaire a quitté la partie.");
+      const t = nav;
+      saving.then((saved) => {
+        if (saved && nav === t) showHomeError(`${opponentName} a quitté le match : victoire par forfait !`);
+        loadLeaderboard();
+      });
     } else {
       goHome("L'adversaire a quitté la partie.");
     }
@@ -453,6 +534,7 @@ function beginMatch(s, m) {
   el.overStatus.textContent = "";
   el.btnRematch.disabled = false;
   showView("match");
+  if (document.hidden) document.title = "⚽ Match trouvé ! — " + TITLE;
 }
 
 function step(s) {
@@ -584,14 +666,16 @@ function saveResult(s, { winner = s.match.winner, forfeit = false } = {}) {
     at: serverTimestamp(),
   };
   if (forfeit) record.forfeit = true;
-  return set(ref(db, `results/${s.code}/${s.m}`), record).catch(() => {});
+  return set(ref(db, `results/${s.code}/${s.m}`), record).then(() => true, () => false);
 }
 
 function forfeit() {
   const s = session;
   if (!s || !s.m || s.over) return;
-  if (!confirm("Abandonner ? Le match comptera comme une défaite.")) return;
-  goHome("Tu as abandonné : défaite par forfait.");
+  if (s.match.status === "finished") { goHome(); return; } // result already decided
+  const started = s.room.locks && s.room.locks[s.m];
+  if (!confirm(started ? "Abandonner ? Le match comptera comme une défaite." : "Quitter le match ?")) return;
+  goHome(started ? "Tu as abandonné : défaite par forfait." : null);
 }
 
 function finishMatch(s) {
@@ -650,6 +734,8 @@ el.btnRematch.addEventListener("click", askRematch);
 el.btnHome.addEventListener("click", () => goHome());
 
 // ---------- start ----------
+
+document.addEventListener("visibilitychange", () => { if (!document.hidden) document.title = TITLE; });
 
 if (!el.nickname.value) el.nickname.value = localStorage.getItem("pseudo") || "";
 setHomeEnabled(false);

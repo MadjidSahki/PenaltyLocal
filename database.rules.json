@@ -12,7 +12,7 @@
             ".validate": "newData.isString()"
           },
           "b": {
-            ".write": "auth != null && !data.exists() && newData.val() === auth.uid && data.parent().child('a').val() !== auth.uid && root.child('rooms/' + $code + '/presence/a').exists()",
+            ".write": "auth != null && !data.exists() && newData.val() === auth.uid && data.parent().child('a').val() !== auth.uid && root.child('rooms/' + $code + '/presence/a').exists() && (!root.child('rooms/' + $code + '/for').exists() || root.child('rooms/' + $code + '/for').val() === auth.uid)",
             ".validate": "newData.isString()"
           },
           "$other": {
@@ -36,7 +36,7 @@
         },
         "matches": {
           "$m": {
-            ".write": "auth != null && !data.exists() && !newData.child('rematch').exists() && (root.child('rooms/' + $code + '/players/a').val() === auth.uid || root.child('rooms/' + $code + '/players/b').val() === auth.uid) && root.child('rooms/' + $code + '/players/b').exists() && ($m === '1' || (root.child('rooms/' + $code + '/matches/' + (newData.child('n').val() - 1) + '/rematch/a').exists() && root.child('rooms/' + $code + '/matches/' + (newData.child('n').val() - 1) + '/rematch/b').exists()))",
+            ".write": "auth != null && !data.exists() && !newData.child('rematch').exists() && (root.child('rooms/' + $code + '/players/a').val() === auth.uid || root.child('rooms/' + $code + '/players/b').val() === auth.uid) && root.child('rooms/' + $code + '/players/b').exists() && root.child('rooms/' + $code + '/presence/a').exists() && root.child('rooms/' + $code + '/presence/b').exists() && ($m === '1' || (root.child('rooms/' + $code + '/matches/' + (newData.child('n').val() - 1) + '/rematch/a').exists() && root.child('rooms/' + $code + '/matches/' + (newData.child('n').val() - 1) + '/rematch/b').exists()))",
             ".validate": "newData.hasChildren(['n', 'rounds'])",
             "n": {
               ".validate": "newData.isNumber() && newData.val() >= 1 && (newData.val() + '') === $m"
@@ -79,6 +79,9 @@
         },
         "$other": {
           ".validate": false
+        },
+        "for": {
+          ".validate": "newData.isString()"
         }
       }
     },
@@ -104,10 +107,10 @@
           ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 16"
         },
         "at": {
-          ".validate": "newData.val() === now || data.val() === newData.val()"
+          ".validate": "newData.val() === now"
         },
         "room": {
-          ".write": "auth != null && auth.uid !== $uid && !data.exists() && root.child('queue/' + $uid + '/name').exists() && newData.isString() && root.child('rooms/' + newData.val() + '/players/a').val() === auth.uid && !root.child('rooms/' + newData.val() + '/players/b').exists()",
+          ".write": "auth != null && auth.uid !== $uid && !data.exists() && root.child('queue/' + $uid + '/name').exists() && newData.isString() && root.child('rooms/' + newData.val() + '/players/a').val() === auth.uid && !root.child('rooms/' + newData.val() + '/players/b').exists() && root.child('rooms/' + newData.val() + '/for').val() === $uid && root.child('rooms/' + newData.val() + '/presence/a').exists()",
           ".validate": "newData.isString() && newData.val().matches(/^[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{4}$/)"
         },
         "$other": {
@@ -170,7 +173,7 @@
             ".validate": false
           },
           "forfeit": {
-            ".validate": "newData.isBoolean() && newData.val() === true && (newData.parent().child('winner').val() === 'a' ? !root.child('rooms/' + $code + '/presence/b').exists() : !root.child('rooms/' + $code + '/presence/a').exists())"
+            ".validate": "newData.isBoolean() && newData.val() === true && root.child('rooms/' + $code + '/locks/' + $m).exists() && (newData.parent().child('winner').val() === 'a' ? (!root.child('rooms/' + $code + '/presence/b').exists() && root.child('rooms/' + $code + '/presence/a').exists()) : (!root.child('rooms/' + $code + '/presence/a').exists() && root.child('rooms/' + $code + '/presence/b').exists()))"
           }
         }
       }
