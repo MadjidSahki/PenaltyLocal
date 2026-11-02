@@ -48,3 +48,10 @@ test("malformed records are skipped", () => {
   const rows = buildLeaderboard([null, { a: { name: "X" } }, result("Alice", 3, "Bob", 1, "a")]);
   assert.equal(rows.length, 2);
 });
+
+test("a forfeit counts as a win for the one who stayed and a loss for the one who left", () => {
+  const rows = buildLeaderboard([{ ...result("Alice", 1, "Bob", 0, "b"), forfeit: true }]);
+  const alice = rows.find((r) => r.name === "Alice");
+  const bob = rows.find((r) => r.name === "Bob");
+  assert.deepEqual([alice.wins, alice.losses, bob.wins, bob.losses], [0, 1, 1, 0]);
+});

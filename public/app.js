@@ -19,6 +19,7 @@ import {
   serverTimestamp,
 } from "https://www.gstatic.com/firebasejs/13.2.0/firebase-database.js";
 import { firebaseConfig, emulators } from "./firebase-config.js";
+import { playShot, resetScene } from "./scene.js";
 
 const { createMatch, applyRound } = window.PenaltyMatch;
 const { buildLeaderboard } = window.PenaltyStats;
@@ -26,7 +27,9 @@ const { buildLeaderboard } = window.PenaltyStats;
 const SHOT_CLOCK_MS = 10000;
 const GRACE_MS = 10500; // must match database.rules.json
 const SETTLE_MS = 800; // extra wait before reading a timed-out round
-const RESULT_PAUSE_MS = 2000;
+const RESULT_PAUSE_MS = 2000; // must match database.rules.json
+const START_MARGIN_MS = 250; // covers the error of the server time estimate
+const NETWORK_TIMEOUT_MS = 8000;
 const CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const LEADERBOARD_SIZE = 10;
 
@@ -42,6 +45,7 @@ if (emulators) {
 
 const views = {
   home: document.getElementById("view-home"),
+  search: document.getElementById("view-search"),
   lobby: document.getElementById("view-lobby"),
   match: document.getElementById("view-match"),
   over: document.getElementById("view-over"),
@@ -56,6 +60,10 @@ function showView(name) {
 const el = {
   nickname: document.getElementById("nickname"),
   joinCode: document.getElementById("join-code"),
+  btnSearch: document.getElementById("btn-search"),
+  btnSearchCancel: document.getElementById("btn-search-cancel"),
+  searchStatus: document.getElementById("search-status"),
+  btnForfeit: document.getElementById("btn-forfeit"),
   btnCreate: document.getElementById("btn-create"),
   btnJoin: document.getElementById("btn-join"),
   homeError: document.getElementById("home-error"),
@@ -69,9 +77,6 @@ const el = {
   clock: document.getElementById("clock"),
   controls: document.getElementById("controls"),
   matchStatus: document.getElementById("match-status"),
-  ball: document.getElementById("ball"),
-  keeper: document.getElementById("keeper"),
-  resultBanner: document.getElementById("result-banner"),
   overTitle: document.getElementById("over-title"),
   overScore: document.getElementById("over-score"),
   overStatus: document.getElementById("over-status"),
@@ -87,6 +92,7 @@ function showHomeError(reason) {
 }
 
 function setHomeEnabled(on) {
+  el.btnSearch.disabled = !on;
   el.btnCreate.disabled = !on;
   el.btnJoin.disabled = !on;
 }
@@ -96,6 +102,14 @@ function setHomeEnabled(on) {
 let serverOffset = 0;
 const serverNow = () => Date.now() + serverOffset;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// Firebase writes wait silently while offline; give up with a message instead.
+function withTimeout(promise) {
+  return Promise.race([
+    promise,
+    sleep(NETWORK_TIMEOUT_MS).then(() => { throw new Error("timeout"); }),
+  ]);
+}
 
 // ---------- shot clock (display only; the rules enforce the deadline) ----------
 
@@ -127,74 +141,6 @@ function setControlsEnabled(on) {
 function renderScores(scores) {
   el.scoreA.textContent = scores.a;
   el.scoreB.textContent = scores.b;
-}
-
-// ---------- animation ----------
-
-// Horizontal offset (px) applied to ball/keeper for each zone, relative
-// to their centered resting position. Tuned to the goal width.
-const ZONE_X = { left: -90, center: 0, right: 90 };
-let shotToken = 0;
-
-function resetScene() {
-  shotToken += 1;
-  el.ball.style.transition = "none";
-  el.keeper.style.transition = "none";
-  el.ball.style.transform = "translate(0, 0)";
-  el.keeper.style.transform = "translate(0, 0) rotate(0deg)";
-  el.resultBanner.hidden = true;
-  el.resultBanner.textContent = "";
-  el.resultBanner.className = "result-banner";
-  // force reflow so the next transition starts from this reset state
-  void el.ball.offsetWidth;
-}
-
-function onTransitionEnd(node) {
-  return new Promise((resolve) => {
-    let done = false;
-    const finish = () => { if (!done) { done = true; node.removeEventListener("transitionend", finish); resolve(); } };
-    node.addEventListener("transitionend", finish);
-    setTimeout(finish, 700); // fallback if transitionend never fires
-  });
-}
-
-// Animate the ball to shooterZone and the keeper diving to keeperZone.
-// A null zone means that side timed out (ball/keeper stays put).
-function playShot(result) {
-  resetScene();
-  const token = shotToken;
-  el.ball.style.transition = "transform 0.4s cubic-bezier(0.25, 0.9, 0.4, 1)";
-  el.keeper.style.transition = "transform 0.35s cubic-bezier(0.3, 1.4, 0.5, 1)";
-
-  requestAnimationFrame(() => {
-    if (result.keeperZone !== null) {
-      const kx = ZONE_X[result.keeperZone];
-      const tilt = result.keeperZone === "left" ? -35 : result.keeperZone === "right" ? 35 : 0;
-      el.keeper.style.transform = `translate(${kx}px, 10px) rotate(${tilt}deg)`;
-    }
-    if (result.shooterZone !== null) {
-      const bx = ZONE_X[result.shooterZone];
-      el.ball.style.transform = `translate(${bx}px, -150px)`;
-    }
-  });
-
-  return onTransitionEnd(el.ball).then(() => {
-    // The next turn may already have reset the scene.
-    if (token !== shotToken) return result;
-    const banner = el.resultBanner;
-    banner.hidden = false;
-    if (result.timedOut) {
-      banner.textContent = "TEMPS ÉCOULÉ";
-      banner.classList.add("is-timeout");
-    } else if (result.goal) {
-      banner.textContent = "BUT !";
-      banner.classList.add("is-goal");
-    } else {
-      banner.textContent = "ARRÊT !";
-      banner.classList.add("is-save");
-    }
-    return result;
-  });
 }
 
 // ---------- scoreboard ----------
@@ -244,9 +190,12 @@ const otherSlot = (slot) => (slot === "a" ? "b" : "a");
 
 async function startSession(code, slot) {
   session = { code, slot, room: null, m: 0, opponentSeen: false, timer: null };
-  const presence = ref(db, `rooms/${code}/presence/${slot}`);
-  await onDisconnect(presence).remove();
   const s = session;
+  // Register the disconnect cleanup before announcing presence, so a tab
+  // closed in between never leaves a ghost player behind.
+  const presence = ref(db, `rooms/${code}/presence/${slot}`);
+  await withTimeout(onDisconnect(presence).remove());
+  await withTimeout(set(presence, true));
   s.unsubscribe = onValue(ref(db, `rooms/${code}`), (snap) => {
     if (session === s) onRoom(s, snap.val());
   });
@@ -258,6 +207,8 @@ function endSession() {
   session = null;
   if (s.unsubscribe) s.unsubscribe();
   clearTimeout(s.timer);
+  clearTimeout(s.finishTimer);
+  clearTimeout(s.joinTimer);
   stopClock();
   const presence = ref(db, `rooms/${s.code}/presence/${s.slot}`);
   onDisconnect(presence).cancel().catch(() => {});
@@ -265,11 +216,33 @@ function endSession() {
 }
 
 function goHome(notice) {
+  stopSearch();
   endSession();
   showView("home");
   if (notice) showHomeError(notice);
   else el.homeError.hidden = true;
   loadLeaderboard();
+}
+
+const OFFLINE_MESSAGE = "Pas de connexion au serveur. Vérifie ta connexion et réessaie.";
+
+// Writes a new room with this player as its creator; returns its code.
+async function newRoomCode(name) {
+  for (let attempt = 0; attempt < 6; attempt++) {
+    const code = randomCode();
+    try {
+      await withTimeout(set(ref(db, `rooms/${code}`), {
+        players: { a: auth.currentUser.uid },
+        names: { a: name },
+        createdAt: serverTimestamp(),
+      }));
+      return code;
+    } catch (err) {
+      if (err.message === "timeout") throw err;
+      // code already taken: try another one
+    }
+  }
+  throw new Error("no free code");
 }
 
 async function createRoom() {
@@ -279,24 +252,13 @@ async function createRoom() {
   el.homeError.hidden = true;
   setHomeEnabled(false);
   try {
-    for (let attempt = 0; attempt < 6; attempt++) {
-      const code = randomCode();
-      try {
-        await set(ref(db, `rooms/${code}`), {
-          players: { a: auth.currentUser.uid },
-          names: { a: name },
-          createdAt: serverTimestamp(),
-          presence: { a: true },
-        });
-      } catch {
-        continue; // code already taken
-      }
-      await startSession(code, "a");
-      el.lobbyCode.textContent = code;
-      showView("lobby");
-      return;
-    }
-    showHomeError("Impossible de créer un salon, réessaie.");
+    const code = await newRoomCode(name);
+    await startSession(code, "a");
+    el.lobbyCode.textContent = code;
+    showView("lobby");
+  } catch (err) {
+    endSession();
+    showHomeError(err.message === "no free code" ? "Impossible de créer un salon, réessaie." : OFFLINE_MESSAGE);
   } finally {
     setHomeEnabled(true);
   }
@@ -314,25 +276,131 @@ async function joinRoom() {
   el.homeError.hidden = true;
   setHomeEnabled(false);
   try {
+    const problem = await joinRoomCode(code, name);
+    if (problem) showHomeError(problem);
+  } finally {
+    setHomeEnabled(true);
+  }
+}
+
+// Joins a room as its second player and starts match 1. Returns an error
+// message for the player, or null once the match is starting.
+async function joinRoomCode(code, name) {
+  try {
     const uid = auth.currentUser.uid;
-    const room = (await get(ref(db, `rooms/${code}`))).val();
-    if (!room) return showHomeError("Salon introuvable.");
-    if (room.players.a === uid) return showHomeError("C'est ton propre salon : donne le code à ton adversaire.");
-    if (room.players.b) return showHomeError("Ce salon est déjà complet.");
-    if (!room.presence || !room.presence.a) return showHomeError("Le créateur a quitté ce salon.");
+    const room = (await withTimeout(get(ref(db, `rooms/${code}`)))).val();
+    if (!room) return "Salon introuvable.";
+    if (room.players.a === uid) return "C'est ton propre salon : donne le code à ton adversaire.";
+    if (room.players.b) return "Ce salon est déjà complet.";
+    if (!room.presence || !room.presence.a) return "Le créateur a quitté ce salon.";
     try {
-      await update(ref(db, `rooms/${code}`), { "players/b": uid, "names/b": name, "presence/b": true });
-    } catch {
-      return showHomeError("Impossible de rejoindre ce salon.");
+      await withTimeout(update(ref(db, `rooms/${code}`), { "players/b": uid, "names/b": name }));
+    } catch (err) {
+      return err.message === "timeout" ? OFFLINE_MESSAGE : "Impossible de rejoindre ce salon.";
     }
     await startSession(code, "b");
     await set(ref(db, `rooms/${code}/matches/1`), {
       n: 1,
       rounds: { 1: { n: 1, startedAt: serverTimestamp() } },
     }).catch(() => {});
+    return null;
+  } catch {
+    endSession();
+    return OFFLINE_MESSAGE;
+  }
+}
+
+// ---------- matchmaking ----------
+// Waiting players sit in queue/{uid}. The newer player of a pair does the
+// matching: it creates a room with the room engine, writes its code into the
+// older player's entry (write-once), and the older player joins that room.
+
+const MATCH_JOIN_TIMEOUT_MS = 15000;
+let search = null;
+
+async function startSearch(notice) {
+  const name = pseudo();
+  if (!name) { showHomeError("Choisis un pseudo."); return; }
+  localStorage.setItem("pseudo", name);
+  el.homeError.hidden = true;
+  setHomeEnabled(false);
+  const uid = auth.currentUser.uid;
+  const entry = ref(db, `queue/${uid}`);
+  try {
+    await withTimeout(onDisconnect(entry).remove());
+    await withTimeout(set(entry, { name, at: serverTimestamp() }));
+  } catch {
+    showHomeError(OFFLINE_MESSAGE);
+    return;
   } finally {
     setHomeEnabled(true);
   }
+  const s = { name, uid, entry, busy: false, tried: new Set() };
+  search = s;
+  el.searchStatus.textContent = notice || "En attente d'un autre joueur…";
+  showView("search");
+  s.unsubscribe = onValue(ref(db, "queue"), (snap) => {
+    if (search === s) onQueue(s, snap.val() || {});
+  });
+}
+
+function stopSearch() {
+  const s = search;
+  if (!s) return;
+  search = null;
+  if (s.unsubscribe) s.unsubscribe();
+  onDisconnect(s.entry).cancel().catch(() => {});
+  remove(s.entry).catch(() => {});
+}
+
+async function onQueue(s, queue) {
+  const mine = queue[s.uid];
+  if (!mine || s.busy) return;
+
+  if (mine.room) {
+    // Someone matched us: join their room.
+    s.busy = true;
+    stopSearch();
+    el.searchStatus.textContent = "Adversaire trouvé, connexion…";
+    const problem = await joinRoomCode(mine.room, s.name);
+    if (problem && !session) startSearch("Nouvelle recherche…");
+    return;
+  }
+
+  const candidates = Object.entries(queue)
+    .filter(([uid, e]) => uid !== s.uid && e && !e.room && typeof e.at === "number" && !s.tried.has(uid))
+    .filter(([uid, e]) => e.at < mine.at || (e.at === mine.at && uid < s.uid))
+    .sort((x, y) => x[1].at - y[1].at);
+  if (!candidates.length) return;
+
+  const [otherUid, other] = candidates[0];
+  s.busy = true;
+  s.tried.add(otherUid);
+  el.searchStatus.textContent = `Adversaire trouvé : ${other.name}…`;
+  try {
+    // Be present in the room before telling the other player where it is.
+    const code = await newRoomCode(s.name);
+    await startSession(code, "a");
+    await withTimeout(set(ref(db, `queue/${otherUid}/room`), code));
+  } catch {
+    // Someone else matched them first (or the network failed): keep looking.
+    endSession();
+    if (search === s) {
+      s.busy = false;
+      el.searchStatus.textContent = "En attente d'un autre joueur…";
+    }
+    return;
+  }
+  if (search !== s) { endSession(); return; } // cancelled meanwhile
+  stopSearch();
+  // If they never show up, go back to the queue.
+  const room = session;
+  room.joinTimer = setTimeout(() => {
+    if (session === room && !room.m) {
+      endSession();
+      startSearch("L'adversaire ne s'est pas connecté, nouvelle recherche…");
+    }
+  }, MATCH_JOIN_TIMEOUT_MS);
 }
 
 // ---------- match flow ----------
@@ -344,9 +412,16 @@ function onRoom(s, room) {
   if (!room) return;
   s.room = room;
   const opp = otherSlot(s.slot);
-  if (room.players && room.players[opp]) s.opponentSeen = true;
-  if (s.opponentSeen && !(room.presence && room.presence[opp])) {
-    goHome("L'adversaire a quitté la partie.");
+  const oppPresent = !!(room.presence && room.presence[opp]);
+  if (oppPresent) s.opponentSeen = true;
+  if (s.opponentSeen && !oppPresent) {
+    if (s.m && !s.over && s.match && s.match.status !== "finished") {
+      const saving = saveResult(s, { winner: s.slot, forfeit: true });
+      goHome(`${room.names[opp]} a quitté le match : victoire par forfait !`);
+      saving.then(loadLeaderboard);
+    } else {
+      goHome("L'adversaire a quitté la partie.");
+    }
     return;
   }
   const m = Math.max(0, ...Object.keys(room.matches || {}).map(Number));
@@ -357,13 +432,15 @@ function onRoom(s, room) {
 
 function beginMatch(s, m) {
   clearTimeout(s.timer);
+  clearTimeout(s.finishTimer);
+  clearTimeout(s.joinTimer);
   Object.assign(s, {
     m,
     match: createMatch({ firstShooter: m % 2 === 1 ? "a" : "b" }),
     resolved: 0,
     shownTurn: 0,
     resolving: false,
-    pauseUntil: 0,
+    nextAt: 0,
     over: false,
     requestedRound: 0,
     requestedMatch: 0,
@@ -380,12 +457,14 @@ function beginMatch(s, m) {
 
 function step(s) {
   if (session !== s || !s.m) return;
-  clearTimeout(s.timer);
   const match = s.room.matches[s.m];
   if (s.over) { renderRematch(s, match); return; }
+  // While resolving, or after the deciding shot (finishTimer shows the end
+  // screen), there is nothing to schedule; leave the timers alone.
   if (s.resolving || s.match.status === "finished") return;
+  clearTimeout(s.timer);
 
-  const wait = s.pauseUntil - Date.now();
+  const wait = s.nextAt - serverNow();
   if (wait > 0) { s.timer = setTimeout(() => step(s), wait); return; }
 
   const r = s.resolved + 1;
@@ -428,13 +507,15 @@ async function choose(zone) {
   const r = s.shownTurn;
   try {
     await set(ref(db, `choices/${s.code}/${s.m}/${r}/${s.slot}`), zone);
-    await set(ref(db, roomPath(s, `/locks/${s.m}/${r}/${s.slot}`)), true);
-    if (session === s && s.shownTurn === r && s.resolved < r) {
-      el.matchStatus.textContent = "En attente de l'adversaire…";
-    }
   } catch {
     if (session === s && s.resolved < r) el.matchStatus.textContent = "Trop tard !";
+    return;
   }
+  if (session === s && s.shownTurn === r && s.resolved < r) {
+    el.matchStatus.textContent = "En attente de l'adversaire…";
+  }
+  // The lock only lets the round end early; the choice already counts.
+  await set(ref(db, roomPath(s, `/locks/${s.m}/${r}/${s.slot}`)), serverTimestamp()).catch(() => {});
 }
 
 // Reads both final choices. A read is refused until the round is final, so a
@@ -465,13 +546,52 @@ async function resolveRound(s, r) {
   s.match = applyRound(s.match, choices).state;
   s.resolved = r;
   s.resolving = false;
+  s.nextAt = nextRoundAt(s, r);
   const result = s.match.lastResult;
   renderScores(result.scores);
   el.matchStatus.textContent = result.timedOut === s.slot ? "Trop lent !" : "";
   playShot(result);
-  s.pauseUntil = Date.now() + RESULT_PAUSE_MS;
-  if (s.match.status === "finished") s.timer = setTimeout(() => finishMatch(s), RESULT_PAUSE_MS);
-  else step(s);
+  if (s.match.status === "finished") {
+    saveResult(s);
+    s.finishTimer = setTimeout(() => finishMatch(s), Math.max(RESULT_PAUSE_MS, s.nextAt - serverNow()));
+  } else {
+    step(s);
+  }
+}
+
+// When the next round may start, in server time. Both players compute the
+// same value, and the database rules refuse an earlier start.
+function nextRoundAt(s, r) {
+  const round = s.room.matches[s.m].rounds[r];
+  const locks = (s.room.locks && s.room.locks[s.m] && s.room.locks[s.m][r]) || {};
+  if (typeof locks.a === "number" && typeof locks.b === "number") {
+    return Math.max(locks.a, locks.b) + RESULT_PAUSE_MS + START_MARGIN_MS;
+  }
+  return round.startedAt + GRACE_MS + RESULT_PAUSE_MS + START_MARGIN_MS;
+}
+
+// Stores the match once in the scoreboard. Both players try; the first write
+// wins. A forfeit is written by the player who stayed.
+function saveResult(s, { winner = s.match.winner, forfeit = false } = {}) {
+  const { scores } = s.match;
+  const record = {
+    code: s.code,
+    m: s.m,
+    uids: { a: s.room.players.a, b: s.room.players.b },
+    a: { name: s.room.names.a, goals: scores.a },
+    b: { name: s.room.names.b, goals: scores.b },
+    winner,
+    at: serverTimestamp(),
+  };
+  if (forfeit) record.forfeit = true;
+  return set(ref(db, `results/${s.code}/${s.m}`), record).catch(() => {});
+}
+
+function forfeit() {
+  const s = session;
+  if (!s || !s.m || s.over) return;
+  if (!confirm("Abandonner ? Le match comptera comme une défaite.")) return;
+  goHome("Tu as abandonné : défaite par forfait.");
 }
 
 function finishMatch(s) {
@@ -484,15 +604,6 @@ function finishMatch(s) {
   el.overStatus.textContent = "";
   el.btnRematch.disabled = false;
   showView("over");
-  set(ref(db, `results/${s.code}/${s.m}`), {
-    code: s.code,
-    m: s.m,
-    uids: { a: s.room.players.a, b: s.room.players.b },
-    a: { name: s.room.names.a, goals: scores.a },
-    b: { name: s.room.names.b, goals: scores.b },
-    winner,
-    at: serverTimestamp(),
-  }).catch(() => {}); // both players try; the first write wins
   step(s);
 }
 
@@ -526,6 +637,9 @@ function askRematch() {
 
 // ---------- UI events ----------
 
+el.btnSearch.addEventListener("click", () => startSearch());
+el.btnSearchCancel.addEventListener("click", () => goHome());
+el.btnForfeit.addEventListener("click", forfeit);
 el.btnCreate.addEventListener("click", createRoom);
 el.btnJoin.addEventListener("click", joinRoom);
 el.btnCancel.addEventListener("click", () => goHome());
@@ -537,7 +651,7 @@ el.btnHome.addEventListener("click", () => goHome());
 
 // ---------- start ----------
 
-el.nickname.value = localStorage.getItem("pseudo") || "";
+if (!el.nickname.value) el.nickname.value = localStorage.getItem("pseudo") || "";
 setHomeEnabled(false);
 
 onValue(ref(db, ".info/serverTimeOffset"), (snap) => { serverOffset = snap.val() || 0; });
@@ -546,7 +660,7 @@ let wasConnected = false;
 onValue(ref(db, ".info/connected"), (snap) => {
   if (snap.val() === true) {
     wasConnected = true;
-  } else if (wasConnected && session) {
+  } else if (wasConnected && (session || search)) {
     goHome("Connexion perdue avec le serveur.");
   }
 });

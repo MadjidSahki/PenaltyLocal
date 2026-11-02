@@ -41,7 +41,8 @@ async function seedRoom({ ago = 0, extra = {} } = {}) {
 }
 
 const choice = (uid, slot, zone, m = 1, r = 1) => set(ref(db(uid), `choices/${CODE}/${m}/${r}/${slot}`), zone);
-const lock = (uid, slot, m = 1, r = 1) => set(ref(db(uid), `rooms/${CODE}/locks/${m}/${r}/${slot}`), true);
+const lock = (uid, slot, m = 1, r = 1) => set(ref(db(uid), `rooms/${CODE}/locks/${m}/${r}/${slot}`), serverTimestamp());
+const PAUSE_MS = 2000;
 const startRound = (uid, r, m = 1, startedAt = serverTimestamp(), n = r) =>
   set(ref(db(uid), `rooms/${CODE}/matches/${m}/rounds/${r}`), { n, startedAt });
 
@@ -193,6 +194,13 @@ test("a lock needs the player's choice first and belongs to the player", async (
   await assertSucceeds(lock("alice", "a"));
 });
 
+test("a lock must carry the server time", async () => {
+  await seedRoom();
+  await choice("alice", "a", "left");
+  await assertFails(set(ref(db("alice"), `rooms/${CODE}/locks/1/1/a`), true));
+  await assertFails(set(ref(db("alice"), `rooms/${CODE}/locks/1/1/a`), Date.now() - 60000));
+});
+
 // ---------- rounds ----------
 
 test("the next round cannot start while the current one is open", async () => {
@@ -200,39 +208,52 @@ test("the next round cannot start while the current one is open", async () => {
   await assertFails(startRound("alice", 2));
 });
 
-test("the next round can start once both players have locked", async () => {
+test("the next round cannot start right after both players have locked", async () => {
   await seedRoom();
   await choice("alice", "a", "left");
   await lock("alice", "a");
   await choice("bob", "b", "right");
   await lock("bob", "b");
+  await assertFails(startRound("bob", 2));
+});
+
+test("the next round can start once the result pause after both locks has passed", async () => {
+  await seedRoom({
+    ago: 5000,
+    extra: { locks: { 1: { 1: { a: Date.now() - 4000, b: Date.now() - PAUSE_MS - 500 } } } },
+  });
   await assertSucceeds(startRound("bob", 2));
 });
 
-test("the next round can start once the shot clock has expired", async () => {
-  await seedRoom({ ago: GRACE_MS + 1000 });
+test("the next round cannot start just after the shot clock expired", async () => {
+  await seedRoom({ ago: GRACE_MS + 500 });
+  await assertFails(startRound("alice", 2));
+});
+
+test("the next round can start once the shot clock and the result pause have expired", async () => {
+  await seedRoom({ ago: GRACE_MS + PAUSE_MS + 1000 });
   await assertSucceeds(startRound("alice", 2));
 });
 
 test("a round can only be started once", async () => {
-  await seedRoom({ ago: GRACE_MS + 1000 });
+  await seedRoom({ ago: GRACE_MS + PAUSE_MS + 1000 });
   await startRound("alice", 2);
   await assertFails(startRound("bob", 2));
 });
 
 test("a round's start time must be the server time", async () => {
-  await seedRoom({ ago: GRACE_MS + 1000 });
+  await seedRoom({ ago: GRACE_MS + PAUSE_MS + 1000 });
   await assertFails(startRound("alice", 2, 1, Date.now() - 60000));
 });
 
 test("rounds cannot be skipped", async () => {
-  await seedRoom({ ago: GRACE_MS + 1000 });
+  await seedRoom({ ago: GRACE_MS + PAUSE_MS + 1000 });
   await assertFails(startRound("alice", 3));
   await assertFails(startRound("alice", 2, 1, serverTimestamp(), 3));
 });
 
 test("strangers cannot start rounds", async () => {
-  await seedRoom({ ago: GRACE_MS + 1000 });
+  await seedRoom({ ago: GRACE_MS + PAUSE_MS + 1000 });
   await assertFails(startRound("carol", 2));
 });
 
@@ -271,6 +292,23 @@ test("matches cannot be skipped or created twice", async () => {
   await assertFails(newMatch("alice", 3));
 });
 
+test("a new match cannot come with rematch flags already set", async () => {
+  await set(ref(db("alice"), `rooms/${CODE}`), newRoom("alice"));
+  await join("bob");
+  await assertFails(
+    set(ref(db("bob"), `rooms/${CODE}/matches/1`), {
+      n: 1,
+      rounds: { 1: { n: 1, startedAt: serverTimestamp() } },
+      rematch: { a: true, b: true },
+    })
+  );
+});
+
+test("a new room cannot pre-fill the joiner's name or presence", async () => {
+  await assertFails(set(ref(db("alice"), `rooms/${CODE}`), { ...newRoom("alice"), names: { a: "Alice", b: "Bob" } }));
+  await assertFails(set(ref(db("alice"), `rooms/${CODE}`), { ...newRoom("alice"), presence: { a: true, b: true } }));
+});
+
 // ---------- results ----------
 
 const resultFor = (overrides = {}) => ({
@@ -297,15 +335,78 @@ test("strangers cannot store results", async () => {
   await assertFails(set(ref(db("carol"), `results/${CODE}/1`), resultFor()));
 });
 
+test("a forfeit is stored only once the loser has really left", async () => {
+  await seedRoom();
+  const forfeit = resultFor({ a: { name: "Alice", goals: 0 }, b: { name: "Bob", goals: 1 }, winner: "b", forfeit: true });
+  await assertFails(set(ref(db("bob"), `results/${CODE}/1`), { ...forfeit, forfeit: "yes" }));
+  await assertFails(set(ref(db("bob"), `results/${CODE}/1`), forfeit)); // alice is still there
+  await remove(ref(db("alice"), `rooms/${CODE}/presence/a`));
+  await assertSucceeds(set(ref(db("bob"), `results/${CODE}/1`), forfeit));
+});
+
 test("results must match the room and be well-formed", async () => {
   await seedRoom();
   await assertFails(set(ref(db("alice"), `results/${CODE}/1`), resultFor({ uids: { a: "alice", b: "carol" } })));
   await assertFails(set(ref(db("alice"), `results/${CODE}/1`), resultFor({ winner: "c" })));
   await assertFails(set(ref(db("alice"), `results/${CODE}/1`), resultFor({ at: 123 })));
   await assertFails(set(ref(db("alice"), `results/${CODE}/2`), resultFor({ m: 2 })));
+  await assertFails(set(ref(db("alice"), `results/${CODE}/1`), resultFor({ a: { name: "Zidane", goals: 3 } })));
 });
 
 test("unknown top-level paths are refused", async () => {
   await assertFails(set(ref(db("alice"), "hack"), true));
   await assertFails(get(ref(db("alice"), "/")));
+});
+
+// ---------- matchmaking queue ----------
+
+const enqueue = (uid, name = "Alice", at = serverTimestamp()) => set(ref(db(uid), `queue/${uid}`), { name, at });
+
+test("a player can join and leave the matchmaking queue", async () => {
+  await assertSucceeds(enqueue("alice"));
+  await assertSucceeds(remove(ref(db("alice"), "queue/alice")));
+});
+
+test("a player cannot queue someone else or remove their entry", async () => {
+  await assertFails(set(ref(db("alice"), "queue/bob"), { name: "Bob", at: serverTimestamp() }));
+  await enqueue("bob", "Bob");
+  await assertFails(set(ref(db("alice"), "queue/bob"), { name: "Bob", at: serverTimestamp() }));
+  await assertFails(remove(ref(db("alice"), "queue/bob")));
+});
+
+test("a queue entry needs a 1–16 character pseudo and the server time", async () => {
+  await assertFails(enqueue("alice", "x".repeat(17)));
+  await assertFails(enqueue("alice", "Alice", Date.now() - 60000));
+});
+
+test("signed-in players can read the queue, visitors cannot", async () => {
+  await enqueue("alice");
+  await assertSucceeds(get(ref(db("bob"), "queue")));
+  await assertFails(get(ref(anon(), "queue")));
+});
+
+test("a waiting player can be matched once, into a room the matcher created", async () => {
+  await enqueue("alice");
+  await set(ref(db("bob"), `rooms/${CODE}`), newRoom("bob", "Bob"));
+  await assertSucceeds(set(ref(db("bob"), "queue/alice/room"), CODE));
+  await assertFails(set(ref(db("carol"), "queue/alice/room"), "ZZ99"));
+});
+
+test("a player cannot be matched into a room that is not the matcher's", async () => {
+  await enqueue("alice");
+  await set(ref(db("dave"), `rooms/${CODE}`), newRoom("dave", "Dave"));
+  await assertFails(set(ref(db("bob"), "queue/alice/room"), CODE));
+});
+
+test("a player cannot be matched into a room that is already full", async () => {
+  await enqueue("alice");
+  await seedRoom(); // alice and bob already play there
+  await assertFails(set(ref(db("alice"), "queue/carol/room"), CODE));
+  await set(ref(db("carol"), "queue/carol"), { name: "Carol", at: serverTimestamp() });
+  await assertFails(set(ref(db("bob"), "queue/carol/room"), CODE));
+});
+
+test("nobody can be matched while not waiting", async () => {
+  await set(ref(db("bob"), `rooms/${CODE}`), newRoom("bob", "Bob"));
+  await assertFails(set(ref(db("bob"), "queue/alice/room"), CODE));
 });

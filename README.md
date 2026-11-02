@@ -4,11 +4,14 @@ Duel de tirs au but en ligne, à deux, chacun sur son appareil.
 
 **Jouer : https://penaltyleague.web.app**
 
-1. Chacun ouvre le lien et entre un pseudo.
-2. L'un clique sur « Créer un salon » et donne le code à 4 caractères à l'autre.
-3. L'autre entre le code et clique sur « Rejoindre » : le match commence.
+Ouvre le lien, entre un pseudo, puis :
 
-Le classement de l'accueil compte les matchs terminés, par pseudo.
+- **« Chercher un adversaire »** : tu affrontes automatiquement le premier joueur qui cherche aussi.
+- **« Créer un salon »** pour jouer avec un ami : donne-lui le code à 4 caractères, il le saisit et clique sur « Rejoindre ».
+
+Le classement de l'accueil compte les matchs terminés, par pseudo. Quitter un
+match en cours (bouton « Abandonner », onglet fermé, connexion perdue) compte
+comme une défaite, et comme une victoire pour l'adversaire.
 
 ## Règles
 

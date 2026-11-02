@@ -15,10 +15,14 @@ from GitHub Actions.
 - Public URL: https://penaltyleague.web.app (Firebase project `penaltyleague`,
   owned by the user's personal Google account; Realtime Database in
   `europe-west1`).
+- Matchmaking: "Chercher un adversaire" pairs two waiting players
+  automatically, reusing the room engine.
 - Same game: rooms with 4-char codes, 1v1, UEFA shootout, secret choices,
   10 s shot clock (shooter timeout = miss, keeper timeout = goal), result pause,
   mutual rematch, "opponent left" handling, animated original visuals.
-- Persistence: every finished match is stored once.
+- Persistence: every finished match is stored once. Leaving an unfinished
+  match (button "Abandonner", closing the tab, losing the connection) is a
+  forfeit: a loss for the one who left, a win for the one who stayed.
 - Scoreboard on the home screen, computed from stored matches.
 - Deploy on every push to `main` via GitHub Actions; tests run on PRs and pushes.
 
@@ -40,9 +44,15 @@ from GitHub Actions.
   - a player can read the opponent's choice only once both choices exist or the
     deadline (+grace) has passed, so choices stay secret and are final when read;
   - rounds are write-once, `startedAt` must be the server time, and round `n`
-    can only be created when round `n-1` is final (prevents starting the
-    opponent's clock early or pre-creating rounds);
-  - a new match (rematch) requires both players' rematch flags.
+    can only be created 2 s (the result pause) after round `n-1` became final:
+    2 s after both locks (locks hold the server time), or 12.5 s after its
+    start. This prevents starting the opponent's clock early;
+  - a new match (rematch) requires both players' rematch flags, and cannot be
+    created with rematch flags inside it;
+  - a result must match the room's players and pseudos; a forfeit result is
+    only accepted once the loser's presence is gone;
+  - a matchmaking entry can only be written by its owner; another player can
+    only set its `room`, once, to a waiting room that player created.
 - The score is never stored as authority: both clients replay the immutable,
   rule-checked choices with the pure `match.js` and get the same result.
 - Accepted trade-off (agreed): a player who edits the page can still write a fake
@@ -67,9 +77,10 @@ rooms/{code}
     n
     rounds/{r}: { n, startedAt }
     rematch/{a|b}: true
-  locks/{m}/{r}/{a|b}: true   public "I have chosen" flag
+  locks/{m}/{r}/{a|b}: server time   public "I have chosen" flag
 choices/{code}/{m}/{r}/{a|b}: "left" | "center" | "right"
-results/{code}-{m}: { code, m, uids:{a,b}, a:{name,goals}, b:{name,goals}, winner, at }
+queue/{uid}: { name, at, room? }   matchmaking: room is set by the matcher
+results/{code}/{m}: { code, m, uids:{a,b}, a:{name,goals}, b:{name,goals}, winner, at, forfeit? }
 ```
 
 ## Flow
@@ -87,7 +98,14 @@ results/{code}-{m}: { code, m, uids:{a,b}, a:{name,goals}, b:{name,goals}, winne
    creates the next round (write-once: the first wins). Otherwise both show the
    end screen and try to write the result record (write-once).
 5. Rematch: both flags → a client creates the next match. Leave/close: presence
-   removed, opponent goes home with a notice.
+   removed, opponent goes home with a notice, and stores a forfeit result if
+   the match was not finished.
+6. Matchmaking: a searching player writes `queue/{uid}` (removed on
+   disconnect). The newer player of a pair creates a room, becomes present in
+   it, then writes the room code into the older player's entry (write-once:
+   if it fails, someone else matched them first). The older player joins that
+   room. A creator whose matched opponent does not join within 15 s goes back
+   to the queue.
 
 ## Left to the builder
 
