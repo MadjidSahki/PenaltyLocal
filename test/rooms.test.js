@@ -45,6 +45,39 @@ test("roomOfPlayer and removeRoom", () => {
   assert.equal(rm.getRoom("AAAA"), undefined);
 });
 
+test("leave removes the player's room and reports the opponent", () => {
+  const rm = createRoomManager({ generateCode: codes() });
+  rm.createRoom({ id: "1", nickname: "P1" });
+  rm.joinRoom("AAAA", { id: "2", nickname: "P2" });
+  const left = rm.leave("1");
+  assert.equal(left.room.code, "AAAA");
+  assert.equal(left.opponent.id, "2");
+  assert.equal(rm.getRoom("AAAA"), undefined);
+  assert.equal(rm.roomOfPlayer("1"), undefined);
+  assert.equal(rm.roomOfPlayer("2"), undefined);
+});
+
+test("leave for a player in no room returns undefined", () => {
+  const rm = createRoomManager({ generateCode: codes() });
+  assert.equal(rm.leave("nobody"), undefined);
+});
+
+test("after leaving, the player's next room is the one they are in", () => {
+  const rm = createRoomManager({ generateCode: codes() });
+  rm.createRoom({ id: "1", nickname: "P1" });
+  rm.leave("1");
+  rm.createRoom({ id: "1", nickname: "P1" });
+  assert.equal(rm.roomOfPlayer("1").code, "BBBB");
+});
+
+test("joining your own room is rejected", () => {
+  const rm = createRoomManager({ generateCode: codes() });
+  rm.createRoom({ id: "1", nickname: "P1" });
+  const j = rm.joinRoom("AAAA", { id: "1", nickname: "P1" });
+  assert.equal(j.ok, false);
+  assert.match(j.reason, /already/i);
+});
+
 test("default generateCode retries past collisions", () => {
   let i = 0;
   const seq = ["AAAA", "AAAA", "BBBB"]; // first two collide

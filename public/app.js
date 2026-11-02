@@ -34,12 +34,14 @@
     resultBanner: document.getElementById("result-banner"),
     overTitle: document.getElementById("over-title"),
     overScore: document.getElementById("over-score"),
+    overStatus: document.getElementById("over-status"),
     btnRematch: document.getElementById("btn-rematch"),
     btnHome: document.getElementById("btn-home"),
   };
 
-  const state = { you: null, names: { a: "A", b: "B" }, role: null };
+  const state = { you: null, names: { a: "A", b: "B" }, role: null, round: 0 };
   let clockTimer = null;
+  let shotToken = 0;
 
   const ws = new WebSocket(`ws://${location.host}`);
 
@@ -86,11 +88,13 @@
   const ZONE_X = { left: -90, center: 0, right: 90 };
 
   function resetScene() {
+    shotToken += 1;
     el.ball.style.transition = "none";
     el.keeper.style.transition = "none";
     el.ball.style.transform = "translate(0, 0)";
     el.keeper.style.transform = "translate(0, 0) rotate(0deg)";
     el.resultBanner.hidden = true;
+    el.resultBanner.textContent = "";
     el.resultBanner.className = "result-banner";
     // force reflow so the next transition starts from this reset state
     void el.ball.offsetWidth;
@@ -109,6 +113,7 @@
   // A null zone means that side timed out (ball/keeper stays put).
   function playShot(result) {
     resetScene();
+    const token = shotToken;
     el.ball.style.transition = "transform 0.4s cubic-bezier(0.25, 0.9, 0.4, 1)";
     el.keeper.style.transition = "transform 0.35s cubic-bezier(0.3, 1.4, 0.5, 1)";
 
@@ -125,6 +130,8 @@
     });
 
     return onTransitionEnd(el.ball).then(() => {
+      // The next turn may already have reset the scene.
+      if (token !== shotToken) return result;
       const banner = el.resultBanner;
       banner.hidden = false;
       if (result.timedOut) {
@@ -166,11 +173,12 @@
 
       case "turn": {
         state.role = msg.role;
+        state.round = msg.round;
         const mine = msg.you === msg.shooter;
         el.roleBanner.textContent = mine
           ? "À toi de tirer — choisis une zone"
           : "Tu es gardien — choisis où plonger";
-        el.resultBanner.hidden = true;
+        resetScene();
         setControlsEnabled(true);
         el.matchStatus.textContent = `Tir n°${msg.round}`;
         startClock(msg.deadlineMs);
@@ -187,9 +195,7 @@
         stopClock();
         setControlsEnabled(false);
         renderScores(msg.scores);
-        if (msg.timedOut && msg.timedOut === state.you) {
-          el.matchStatus.textContent = "Trop lent !";
-        }
+        el.matchStatus.textContent = msg.timedOut && msg.timedOut === state.you ? "Trop lent !" : "";
         playShot(msg);
         break;
       }
@@ -199,7 +205,20 @@
         const iWon = msg.winner === state.you;
         el.overTitle.textContent = iWon ? "Victoire !" : `${winnerName} gagne`;
         el.overScore.textContent = `${msg.scores.a} — ${msg.scores.b}`;
+        el.overStatus.textContent = "";
+        el.btnRematch.disabled = false;
         showView("over");
+        break;
+      }
+
+      case "rematchWaiting":
+        el.overStatus.textContent = "En attente de l'adversaire…";
+        el.btnRematch.disabled = true;
+        break;
+
+      case "rematchRequested": {
+        const opponentName = state.names[state.you === "a" ? "b" : "a"];
+        el.overStatus.textContent = `${opponentName} veut rejouer !`;
         break;
       }
 
@@ -217,6 +236,10 @@
 
   ws.addEventListener("close", () => {
     stopClock();
+    el.btnCreate.disabled = true;
+    el.btnJoin.disabled = true;
+    showHomeError("Connexion perdue avec le serveur. Recharge la page pour rejouer.");
+    showView("home");
   });
 
   // ----- UI events -----
@@ -235,13 +258,14 @@
   for (const btn of el.controls.querySelectorAll(".btn-zone")) {
     btn.addEventListener("click", () => {
       if (el.controls.classList.contains("disabled")) return;
-      send({ type: "choice", zone: btn.dataset.zone });
+      send({ type: "choice", zone: btn.dataset.zone, round: state.round });
       setControlsEnabled(false);
     });
   }
 
   el.btnRematch.addEventListener("click", () => send({ type: "rematch" }));
   el.btnHome.addEventListener("click", () => {
+    send({ type: "leave" });
     showView("home");
     el.homeError.hidden = true;
   });

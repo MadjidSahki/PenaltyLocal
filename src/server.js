@@ -1,5 +1,6 @@
 const http = require("http");
 const fs = require("fs");
+const os = require("os");
 const path = require("path");
 const crypto = require("crypto");
 const { WebSocketServer } = require("ws");
@@ -17,7 +18,17 @@ const CONTENT_TYPES = {
 };
 
 function serveStatic(req, res) {
-  let urlPath = decodeURIComponent(req.url.split("?")[0]);
+  let urlPath;
+  try {
+    urlPath = decodeURIComponent(req.url.split("?")[0]);
+  } catch {
+    urlPath = null;
+  }
+  if (urlPath === null || urlPath.includes("\0")) {
+    res.writeHead(400);
+    res.end("Bad request");
+    return;
+  }
   if (urlPath === "/") urlPath = "/index.html";
   const filePath = path.join(PUBLIC_DIR, path.normalize(urlPath));
   if (!filePath.startsWith(PUBLIC_DIR)) {
@@ -37,7 +48,7 @@ function serveStatic(req, res) {
   });
 }
 
-function createServer({ port = 3000, shotClockMs = 10000 } = {}) {
+function createServer({ port = 3000, shotClockMs = 10000, resultPauseMs = 2000 } = {}) {
   const rooms = createRoomManager({});
   const httpServer = http.createServer(serveStatic);
   const wss = new WebSocketServer({ server: httpServer });
@@ -55,17 +66,31 @@ function createServer({ port = 3000, shotClockMs = 10000 } = {}) {
     return player ? sockets.get(player.id) : null;
   }
 
-  function clearClock(room) {
-    if (room.clock) {
-      clearTimeout(room.clock);
-      room.clock = null;
+  function slotOf(room, playerId) {
+    return room.players.a.id === playerId ? "a" : "b";
+  }
+
+  // A room has one timer at a time: the shot clock during a turn, or the
+  // pause that lets both players watch the result.
+  function clearTimer(room) {
+    if (room.timer) {
+      clearTimeout(room.timer);
+      room.timer = null;
     }
+  }
+
+  function leaveRoom(playerId) {
+    const left = rooms.leave(playerId);
+    if (!left) return;
+    clearTimer(left.room);
+    if (left.opponent) send(sockets.get(left.opponent.id), { type: "opponentLeft" });
   }
 
   function startRound(room) {
     const match = room.match;
     const shooter = match.shooter;
     const keeper = shooter === "a" ? "b" : "a";
+    room.stage = "turn";
     for (const slot of ["a", "b"]) {
       const role = slot === shooter ? "shooter" : "keeper";
       send(playerSocket(room, slot), {
@@ -77,8 +102,8 @@ function createServer({ port = 3000, shotClockMs = 10000 } = {}) {
         deadlineMs: shotClockMs,
       });
     }
-    clearClock(room);
-    room.clock = setTimeout(() => {
+    clearTimer(room);
+    room.timer = setTimeout(() => {
       // A player who hasn't chosen times out; the shooter is resolved first
       // so that if both failed to choose it counts as a missed shot.
       const pending = room.match.pending;
@@ -92,7 +117,8 @@ function createServer({ port = 3000, shotClockMs = 10000 } = {}) {
   }
 
   function broadcastResult(room) {
-    clearClock(room);
+    clearTimer(room);
+    room.stage = "result";
     const result = roundResult(room.match);
     for (const slot of ["a", "b"]) {
       send(playerSocket(room, slot), {
@@ -105,20 +131,26 @@ function createServer({ port = 3000, shotClockMs = 10000 } = {}) {
         timedOut: result.timedOut,
       });
     }
-    if (room.match.status === "finished") {
-      for (const slot of ["a", "b"]) {
-        send(playerSocket(room, slot), {
-          type: "matchOver",
-          winner: room.match.winner,
-          scores: room.match.scores,
-        });
+    room.timer = setTimeout(() => {
+      room.timer = null;
+      if (room.match.status === "finished") {
+        room.stage = "over";
+        room.rematch = { a: false, b: false };
+        for (const slot of ["a", "b"]) {
+          send(playerSocket(room, slot), {
+            type: "matchOver",
+            winner: room.match.winner,
+            scores: room.match.scores,
+          });
+        }
+      } else {
+        startRound(room);
       }
-    } else {
-      startRound(room);
-    }
+    }, resultPauseMs);
   }
 
   function startMatch(room) {
+    clearTimer(room);
     room.match = createMatch();
     const names = {
       a: room.players.a.nickname,
@@ -132,8 +164,10 @@ function createServer({ port = 3000, shotClockMs = 10000 } = {}) {
 
   wss.on("connection", (ws) => {
     const playerId = crypto.randomUUID();
-    ws.playerId = playerId;
     sockets.set(playerId, ws);
+
+    // Without a listener, a protocol error on one socket would crash the process.
+    ws.on("error", () => {});
 
     ws.on("message", (raw) => {
       let msg;
@@ -142,28 +176,35 @@ function createServer({ port = 3000, shotClockMs = 10000 } = {}) {
       } catch {
         return;
       }
-      handle(ws, playerId, msg);
+      if (!msg || typeof msg !== "object" || typeof msg.type !== "string") return;
+      try {
+        handle(ws, playerId, msg);
+      } catch (err) {
+        console.error("Message handling failed:", err);
+      }
     });
 
     ws.on("close", () => {
       sockets.delete(playerId);
-      const room = rooms.roomOfPlayer(playerId);
-      if (!room) return;
-      clearClock(room);
-      const otherSlot = room.players.a && room.players.a.id === playerId ? "b" : "a";
-      send(playerSocket(room, otherSlot), { type: "opponentLeft" });
-      rooms.removeRoom(room.code);
+      leaveRoom(playerId);
     });
   });
 
   function handle(ws, playerId, msg) {
     switch (msg.type) {
       case "create": {
-        const { code, room } = rooms.createRoom({ id: playerId, nickname: msg.nickname || "Joueur" });
+        leaveRoom(playerId);
+        const { code } = rooms.createRoom({ id: playerId, nickname: msg.nickname || "Joueur" });
         send(ws, { type: "created", code });
         break;
       }
       case "join": {
+        const current = rooms.roomOfPlayer(playerId);
+        if (current && current.code === msg.code) {
+          send(ws, { type: "error", reason: "You are already in this room" });
+          return;
+        }
+        leaveRoom(playerId);
         const result = rooms.joinRoom(msg.code, { id: playerId, nickname: msg.nickname || "Joueur" });
         if (!result.ok) {
           send(ws, { type: "error", reason: result.reason });
@@ -181,8 +222,10 @@ function createServer({ port = 3000, shotClockMs = 10000 } = {}) {
       }
       case "choice": {
         const room = rooms.roomOfPlayer(playerId);
-        if (!room || !room.match) return;
-        const slot = room.players.a.id === playerId ? "a" : "b";
+        // Only accept a choice for the round being played: a click that
+        // arrives after the shot clock must not count for the next round.
+        if (!room || room.stage !== "turn" || msg.round !== room.match.round) return;
+        const slot = slotOf(room, playerId);
         const r = submitChoice(room.match, slot, msg.zone);
         if (!r.ok) {
           send(ws, { type: "error", reason: r.reason });
@@ -199,10 +242,21 @@ function createServer({ port = 3000, shotClockMs = 10000 } = {}) {
       }
       case "rematch": {
         const room = rooms.roomOfPlayer(playerId);
-        if (!room || !room.players.b) return;
-        startMatch(room);
+        if (!room || room.stage !== "over") return;
+        const slot = slotOf(room, playerId);
+        const other = slot === "a" ? "b" : "a";
+        room.rematch[slot] = true;
+        if (room.rematch[other]) {
+          startMatch(room);
+        } else {
+          send(ws, { type: "rematchWaiting" });
+          send(playerSocket(room, other), { type: "rematchRequested" });
+        }
         break;
       }
+      case "leave":
+        leaveRoom(playerId);
+        break;
       default:
         break;
     }
@@ -223,12 +277,27 @@ function createServer({ port = 3000, shotClockMs = 10000 } = {}) {
   };
 }
 
+function lanAddresses() {
+  const addresses = [];
+  for (const entries of Object.values(os.networkInterfaces())) {
+    for (const entry of entries || []) {
+      if (entry.family === "IPv4" && !entry.internal) addresses.push(entry.address);
+    }
+  }
+  return addresses;
+}
+
 if (require.main === module) {
   const port = process.env.PORT || 3000;
   const srv = createServer({ port: Number(port) });
-  const addr = srv.httpServer.address();
-  console.log(`Penalty 1v1 en écoute sur le port ${addr.port}`);
-  console.log(`Local : http://localhost:${addr.port}`);
+  srv.httpServer.on("listening", () => {
+    const actualPort = srv.httpServer.address().port;
+    console.log(`Penalty 1v1 en écoute sur le port ${actualPort}`);
+    console.log(`Sur ce PC : http://localhost:${actualPort}`);
+    for (const address of lanAddresses()) {
+      console.log(`Réseau local : http://${address}:${actualPort}`);
+    }
+  });
 }
 
 module.exports = { createServer };

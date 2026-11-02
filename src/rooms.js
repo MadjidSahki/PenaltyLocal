@@ -12,6 +12,7 @@ function defaultGenerateCode() {
 function createRoomManager({ generateCode } = {}) {
   const gen = generateCode || defaultGenerateCode;
   const rooms = new Map();
+  const playerRooms = new Map(); // playerId -> room code
 
   function uniqueCode() {
     let code = gen();
@@ -30,6 +31,7 @@ function createRoomManager({ generateCode } = {}) {
       match: null,
     };
     rooms.set(code, room);
+    playerRooms.set(player.id, code);
     return { code, room };
   }
 
@@ -38,11 +40,15 @@ function createRoomManager({ generateCode } = {}) {
     if (!room) {
       return { ok: false, reason: "Room not found" };
     }
+    if (room.players.a.id === player.id) {
+      return { ok: false, reason: "You are already in this room" };
+    }
     if (room.players.b !== null) {
       return { ok: false, reason: "Room is full" };
     }
     room.players.b = player;
     room.status = "ready";
+    playerRooms.set(player.id, code);
     return { ok: true, room, slot: "b" };
   }
 
@@ -51,22 +57,30 @@ function createRoomManager({ generateCode } = {}) {
   }
 
   function removeRoom(code) {
+    const room = rooms.get(code);
+    if (!room) return;
+    for (const player of [room.players.a, room.players.b]) {
+      if (player && playerRooms.get(player.id) === code) playerRooms.delete(player.id);
+    }
     rooms.delete(code);
   }
 
   function roomOfPlayer(playerId) {
-    for (const room of rooms.values()) {
-      if (
-        (room.players.a && room.players.a.id === playerId) ||
-        (room.players.b && room.players.b.id === playerId)
-      ) {
-        return room;
-      }
-    }
-    return undefined;
+    const code = playerRooms.get(playerId);
+    return code === undefined ? undefined : rooms.get(code);
   }
 
-  return { createRoom, joinRoom, getRoom, removeRoom, roomOfPlayer };
+  // Removes the player's room; returns it with the other player (or null).
+  function leave(playerId) {
+    const room = roomOfPlayer(playerId);
+    if (!room) return undefined;
+    const { a, b } = room.players;
+    const opponent = a && a.id === playerId ? b : a;
+    removeRoom(room.code);
+    return { room, opponent };
+  }
+
+  return { createRoom, joinRoom, getRoom, removeRoom, roomOfPlayer, leave };
 }
 
 module.exports = { createRoomManager };
