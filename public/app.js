@@ -81,9 +81,64 @@
     el.scoreB.textContent = scores.b;
   }
 
-  // Minimal result display; replaced by animated playShot in Task 5.
+  // Horizontal offset (px) applied to ball/keeper for each zone, relative
+  // to their centered resting position. Tuned to the goal width.
+  const ZONE_X = { left: -90, center: 0, right: 90 };
+
+  function resetScene() {
+    el.ball.style.transition = "none";
+    el.keeper.style.transition = "none";
+    el.ball.style.transform = "translate(0, 0)";
+    el.keeper.style.transform = "translate(0, 0) rotate(0deg)";
+    el.resultBanner.hidden = true;
+    el.resultBanner.className = "result-banner";
+    // force reflow so the next transition starts from this reset state
+    void el.ball.offsetWidth;
+  }
+
+  function onTransitionEnd(node) {
+    return new Promise((resolve) => {
+      let done = false;
+      const finish = () => { if (!done) { done = true; node.removeEventListener("transitionend", finish); resolve(); } };
+      node.addEventListener("transitionend", finish);
+      setTimeout(finish, 700); // fallback if transitionend never fires
+    });
+  }
+
+  // Animate the ball to shooterZone and the keeper diving to keeperZone.
+  // A null zone means that side timed out (ball/keeper stays put).
   function playShot(result) {
-    return Promise.resolve(result);
+    resetScene();
+    el.ball.style.transition = "transform 0.4s cubic-bezier(0.25, 0.9, 0.4, 1)";
+    el.keeper.style.transition = "transform 0.35s cubic-bezier(0.3, 1.4, 0.5, 1)";
+
+    requestAnimationFrame(() => {
+      if (result.keeperZone !== null) {
+        const kx = ZONE_X[result.keeperZone];
+        const tilt = result.keeperZone === "left" ? -35 : result.keeperZone === "right" ? 35 : 0;
+        el.keeper.style.transform = `translate(${kx}px, 10px) rotate(${tilt}deg)`;
+      }
+      if (result.shooterZone !== null) {
+        const bx = ZONE_X[result.shooterZone];
+        el.ball.style.transform = `translate(${bx}px, -150px)`;
+      }
+    });
+
+    return onTransitionEnd(el.ball).then(() => {
+      const banner = el.resultBanner;
+      banner.hidden = false;
+      if (result.timedOut) {
+        banner.textContent = "TEMPS ÉCOULÉ";
+        banner.classList.add("is-timeout");
+      } else if (result.goal) {
+        banner.textContent = "BUT !";
+        banner.classList.add("is-goal");
+      } else {
+        banner.textContent = "ARRÊT !";
+        banner.classList.add("is-save");
+      }
+      return result;
+    });
   }
 
   // ----- Message handling -----
